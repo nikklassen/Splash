@@ -8,14 +8,14 @@ pub fn input_loop() {
     loop {
         let input = readline("\u{1F30A}   ");
         let line = match input {
-            Ok(l) => l,
+            e @ Ok(1) => e.unwrap(),
             // ^D
             Err(_) => return,
         };
 
         add_history(&line);
 
-        let tokens : Vec<_> = line.split_whitespace().collect(); 
+        let tokens : Vec<_> = line.split_whitespace().collect();
         if tokens.len() == 0 {
             continue;
         }
