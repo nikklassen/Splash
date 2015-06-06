@@ -1,5 +1,5 @@
+extern crate readline;
 mod prompt;
-mod readline;
 mod builtin;
 
 fn main() {

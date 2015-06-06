@@ -2,3 +2,7 @@
 
 name = "splash"
 version = "0.0.1"
+
+[dependencies.readline]
+
+git = "https://github.com/evadnoob/rust-readline.git"

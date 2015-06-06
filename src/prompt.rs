@@ -1,4 +1,5 @@
-use readline::readline;
+use readline::*;
+
 use std::process::Command;
 use std::io;
 use builtin::{is_builtin, exec_builtin};
@@ -8,12 +9,11 @@ pub fn input_loop() {
         let input = readline("\u{1F30A}   ");
         let line = match input {
             Ok(l) => l,
-            Err(_) => continue,
+            // ^D
+            Err(_) => return,
         };
-        // ^D
-        if line.len() == 0 {
-            return
-        }
+
+        add_history(&line);
 
         let tokens : Vec<_> = line.split_whitespace().collect(); 
         if tokens.len() == 0 {
