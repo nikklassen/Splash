@@ -82,14 +82,15 @@ pub fn echo(args : &[&str]) -> io::Result<i32> {
         Err(f) => { panic!(f.to_string()) }
     };
 
+    let remaining_args = matches.free.connect(" ");
+
     if matches.opt_present("n") {
-        print!("{}", matches.free.connect(" "));
+        print!("{}", remaining_args);
         io::stdout().flush().ok();
-        // Flush for immediate output https://doc.rust-lang.org/std/macro.print!.html
     }
 
     else {
-        println!("{}", matches.free.connect(" "));
+        println!("{}", remaining_args);
     }
 
     Ok(0)
