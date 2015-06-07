@@ -1,4 +1,6 @@
 extern crate readline;
+extern crate getopts;
+
 mod prompt;
 mod builtin;
 

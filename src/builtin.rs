@@ -1,11 +1,14 @@
 use std::env;
+use std::io::prelude::*;
 use std::io;
 use std::path::{PathBuf, Component};
 use std::process;
+use getopts::Options;
 
-static BUILTINS : [Builtin; 3]= [
+static BUILTINS : [Builtin; 4]= [
     Builtin { name: "cd", func: cd },
     Builtin { name: "exit", func: exit },
+    Builtin { name: "echo", func: echo },
     Builtin { name: "pwd", func: pwd },
 ];
 
@@ -67,6 +70,29 @@ pub fn exit(_args : &[&str]) -> io::Result<i32> {
 pub fn pwd(_args : &[&str]) -> io::Result<i32> {
     println!("{}", env::var("PWD").unwrap_or(String::new()));
     SUCCESS
+}
+
+pub fn echo(args : &[&str]) -> io::Result<i32> {
+    let mut opts = Options::new();
+
+    opts.optflag("n", "", "Suppress new lines");
+
+    let matches = match opts.parse(&args[..]) {
+        Ok(m) => { m }
+        Err(f) => { panic!(f.to_string()) }
+    };
+
+    if matches.opt_present("n") {
+        print!("{}", matches.free.connect(" "));
+        io::stdout().flush().ok();
+        // Flush for immediate output https://doc.rust-lang.org/std/macro.print!.html
+    }
+
+    else {
+        println!("{}", matches.free.connect(" "));
+    }
+
+    Ok(0)
 }
 
 pub fn exec_builtin(args : &[&str]) -> io::Result<i32> {
