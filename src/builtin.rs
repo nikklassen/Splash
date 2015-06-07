@@ -37,7 +37,7 @@ pub fn cd(args : &[&str]) -> io::Result<i32> {
     fn change_to(p: &PathBuf) -> io::Result<()> {
         let new_pwd_buf = normalize_logical_path(p);
         env::set_var("PWD", &new_pwd_buf);
-        env::set_current_dir(new_pwd_buf)
+        env::set_current_dir(&new_pwd_buf);
     }
 
     if args.len() == 0 {
