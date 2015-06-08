@@ -86,7 +86,7 @@ pub fn echo(args : &[&str]) -> io::Result<i32> {
 
     if matches.opt_present("n") {
         print!("{}", remaining_args);
-        io::stdout().flush().ok();
+        try!(io::stdout().flush());
     }
 
     else {
