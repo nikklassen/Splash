@@ -79,7 +79,7 @@ pub fn echo(args : &[&str]) -> io::Result<i32> {
 
     let matches = match opts.parse(args) {
         Ok(m) => { m }
-        Err(f) => { panic!(f.to_string()) }
+        Err(_) => { return Err(io::Error::new(io::ErrorKind::InvalidInput, "Unable to parse arguments.")) }
     };
 
     let remaining_args = matches.free.connect(" ");
