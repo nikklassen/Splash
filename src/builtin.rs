@@ -78,8 +78,11 @@ pub fn echo(args : &[&str]) -> io::Result<i32> {
     opts.optflag("n", "", "Suppress new lines");
 
     let matches = match opts.parse(args) {
-        Ok(m) => { m }
-        Err(_) => { return Err(io::Error::new(io::ErrorKind::InvalidInput, "Unable to parse arguments.")) }
+        Ok(m) => m,
+        Err(_) => { return Err(
+                        io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "Unable to parse arguments.")) },
     };
 
     let remaining_args = matches.free.connect(" ");
@@ -87,9 +90,7 @@ pub fn echo(args : &[&str]) -> io::Result<i32> {
     if matches.opt_present("n") {
         print!("{}", remaining_args);
         try!(io::stdout().flush());
-    }
-
-    else {
+    } else {
         println!("{}", remaining_args);
     }
 
