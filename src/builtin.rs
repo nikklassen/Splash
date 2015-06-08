@@ -77,7 +77,7 @@ pub fn echo(args : &[&str]) -> io::Result<i32> {
 
     opts.optflag("n", "", "Suppress new lines");
 
-    let matches = match opts.parse(&args[..]) {
+    let matches = match opts.parse(args) {
         Ok(m) => { m }
         Err(f) => { panic!(f.to_string()) }
     };
