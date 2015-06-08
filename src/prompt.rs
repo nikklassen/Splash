@@ -15,7 +15,7 @@ pub fn input_loop() {
 
         add_history(&line);
 
-        let tokens : Vec<_> = line.split_whitespace().collect(); 
+        let tokens : Vec<_> = line.split_whitespace().collect();
         if tokens.len() == 0 {
             continue;
         }
