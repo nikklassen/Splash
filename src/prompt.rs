@@ -59,7 +59,6 @@ mod tests {
     use super::{get_prompt_string, WAVE_EMOJI};
 
     fn prompt_unset_pwd() {
-        println!("RUN_TEST_TASKS: {:?}", env::var("RUN_TEST_TASKS"));
         let pwd = "my_dir";
         env::set_var("PWD", pwd);
         env::remove_var("PWD");
