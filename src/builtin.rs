@@ -5,7 +5,12 @@ use std::path::{PathBuf, Component};
 use std::process;
 use getopts::Options;
 
-static BUILTINS : [Builtin; 4]= [
+struct Builtin {
+    name: &'static str,
+    func: fn(&[String]) -> io::Result<i32>,
+}
+
+static BUILTINS: [Builtin; 4] = [
     Builtin { name: "cd", func: cd },
     Builtin { name: "exit", func: exit },
     Builtin { name: "echo", func: echo },
@@ -14,11 +19,11 @@ static BUILTINS : [Builtin; 4]= [
 
 const SUCCESS: io::Result<i32> = Ok(0);
 
-pub fn is_builtin(cmd : &str) -> bool {
+pub fn is_builtin(cmd: &String) -> bool {
     get_builtin(cmd).is_some()
 }
 
-fn get_builtin(cmd : &str) -> Option<&Builtin> {
+fn get_builtin<'a>(cmd: &String) -> Option<&'a Builtin> {
     BUILTINS.iter().find(|b| {
         b.name == cmd
     })
@@ -36,7 +41,7 @@ fn normalize_logical_path(path: &PathBuf) -> PathBuf {
     normalized_path
 }
 
-pub fn cd(args : &[&str]) -> io::Result<i32> {
+pub fn cd(args: &[String]) -> io::Result<i32> {
     fn change_to(p: &PathBuf) -> io::Result<()> {
         let new_pwd_buf = normalize_logical_path(p);
         env::set_var("PWD", &new_pwd_buf);
@@ -58,21 +63,21 @@ pub fn cd(args : &[&str]) -> io::Result<i32> {
         .map(|p| PathBuf::from(p))
         .or(cur_dir)
         .unwrap();
-    pwd_buf.push(args[0]);
+    pwd_buf.push(&args[0]);
 
     change_to(&pwd_buf).and(SUCCESS)
 }
 
-pub fn exit(_args : &[&str]) -> io::Result<i32> {
+pub fn exit(_args: &[String]) -> io::Result<i32> {
     process::exit(0)
 }
 
-pub fn pwd(_args : &[&str]) -> io::Result<i32> {
+pub fn pwd(_args: &[String]) -> io::Result<i32> {
     println!("{}", env::var("PWD").unwrap_or(String::new()));
     SUCCESS
 }
 
-pub fn echo(args : &[&str]) -> io::Result<i32> {
+pub fn echo(args: &[String]) -> io::Result<i32> {
     let mut opts = Options::new();
 
     opts.optflag("n", "", "Suppress new lines");
@@ -96,8 +101,8 @@ pub fn echo(args : &[&str]) -> io::Result<i32> {
     SUCCESS
 }
 
-pub fn exec_builtin(args : &[&str]) -> io::Result<i32> {
-    if let Some(b) = get_builtin(args[0]) {
+pub fn exec_builtin(args: &Vec<String>) -> io::Result<i32> {
+    if let Some(b) = get_builtin(&args[0]) {
         let f = b.func;
         f(&args[1..])
     } else {
@@ -106,9 +111,4 @@ pub fn exec_builtin(args : &[&str]) -> io::Result<i32> {
                 io::ErrorKind::NotFound,
                 format!("Builtin \"{}\" not found", args[0])))
     }
-}
-
-struct Builtin {
-    name : &'static str,
-    func : fn(&[&str]) -> io::Result<i32>,
 }
