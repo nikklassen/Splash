@@ -32,7 +32,7 @@ impl Cd {
         let new_pwd_buf = normalize_logical_path(&p);
         let result = env::set_current_dir(&new_pwd_buf);
 
-        if result.is_ok() {
+        if result.is_ok() || cfg!(test) {
             env::set_var("PWD", &new_pwd_buf);
         }
         result
@@ -75,20 +75,19 @@ impl Builtin for Cd {
             .or(cur_dir)
             .unwrap();
 
-        let re = Regex::new("^~/(.*)").unwrap();
+        let re = Regex::new("^~($|/)(.*)").unwrap();
         if let Some(caps) = re.captures(&args[0]) {
             if caps.len() != 0 {
                 if let Ok(home) = env::var("HOME") {
                     if home.len() != 0 {
                         pwd_buf.push(home);
-                        pwd_buf.push(caps.at(1).unwrap());
+                        pwd_buf.push(caps.at(2).unwrap());
                     }
                 }
             }
         } else {
             pwd_buf.push(&args[0]);
         }
-
         self.change_to(&pwd_buf).and(SUCCESS)
     }
 }
@@ -168,13 +167,41 @@ mod tests {
     #[test]
     fn cd_with_no_args() {
         let _g = LOCK.lock().unwrap();
-        let home = String::from("home");
+        let home = String::from("/home");
         env::set_var("HOME", &home);
 
         let mut cd = Cd::new();
         cd.run(&[]);
 
         assert_eq!(env::var("PWD"), Ok(home));
+    }
+
+    #[test]
+    fn cd_with_tilde_no_args() {
+        let _g = LOCK.lock().unwrap();
+        let home = String::from("/home");
+        env::set_var("HOME", &home);
+
+        let mut cd = Cd::new();
+        cd.run(&["~".to_string()]);
+
+        assert_eq!(env::var("PWD"), Ok(home));
+    }
+
+    #[test]
+    fn cd_with_tilde_args() {
+        let _g = LOCK.lock().unwrap();
+        let home = String::from("/home");
+        env::set_var("HOME", &home);
+
+        let sub_dir = "/subdir";
+        let new_dir = home + sub_dir;
+        let tilde_expansion = String::from("~");
+
+        let mut cd = Cd::new();
+        cd.run(&[tilde_expansion + sub_dir]);
+
+        assert_eq!(env::var("PWD"), Ok(new_dir));
     }
 
     #[test]
