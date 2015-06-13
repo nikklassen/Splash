@@ -1,3 +1,4 @@
+#![feature(std_misc)]
 extern crate readline;
 extern crate parser_combinators;
 extern crate getopts;

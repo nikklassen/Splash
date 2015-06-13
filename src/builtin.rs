@@ -49,7 +49,7 @@ fn normalize_logical_path<P: AsRef<Path>>(path: &P) -> PathBuf {
 
 impl Builtin for Cd {
     fn run(&mut self, args: &[String]) -> io::Result<i32> {
-        if args.len() == 0 {
+        if args.len() == 0 || args[0] == "~" {
             if let Ok(home) = env::var("HOME") {
                 if home.len() != 0 {
                     return self.change_to(&PathBuf::from(&home))
@@ -143,16 +143,68 @@ pub fn init_builtins() -> BuiltinMap {
 mod tests {
     use std::env;
     use super::{Cd, Builtin};
+    use std::sync::{StaticMutex, MUTEX_INIT};
+
+    static LOCK: StaticMutex = MUTEX_INIT;
 
     #[test]
     fn cd_with_no_args() {
-        let home = String::from("my_home");
+        let _g = LOCK.lock().unwrap();
+        let home = String::from("home");
         env::set_var("HOME", &home);
-        env::set_var("PWD", "pwd");
 
         let mut cd = Cd::new();
         cd.run(&[]);
 
         assert_eq!(env::var("PWD"), Ok(home));
+    }
+
+    #[test]
+    fn cd_with_tilde() {
+        let _g = LOCK.lock().unwrap();
+        let home = String::from("home");
+        env::set_var("HOME", &home);
+
+        let mut cd = Cd::new();
+        cd.run(&["~".to_string()]);
+
+        assert_eq!(env::var("PWD"), Ok(home));
+    }
+
+    #[test]
+    fn cd_with_absolute_arg() {
+        let _g = LOCK.lock().unwrap();
+        let dir = String::from("/dir");
+
+        let mut cd = Cd::new();
+        cd.run(&[dir.clone()]);
+
+        assert_eq!(env::var("PWD"), Ok(dir));
+    }
+
+    #[test]
+    fn cd_with_relative_arg() {
+        let _g = LOCK.lock().unwrap();
+        let sub_dir = String::from("subdir");
+        let new_dir = env::var("PWD").unwrap() + "/" + &sub_dir;
+
+        let mut cd = Cd::new();
+        cd.run(&[sub_dir.clone()]);
+
+        assert_eq!(env::var("PWD"), Ok(new_dir));
+    }
+
+    #[test]
+    fn cd_previous_directory() {
+        let _g = LOCK.lock().unwrap();
+        let pwd = env::var("PWD");
+        let dir = String::from("/dirmod");
+        let prev_dir = String::from("-");
+
+        let mut cd = Cd::new();
+        cd.run(&[dir]);
+        cd.run(&[prev_dir]);
+
+        assert_eq!(env::var("PWD"), pwd);
     }
 }
