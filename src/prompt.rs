@@ -1,4 +1,5 @@
-use builtin::{is_builtin, exec_builtin};
+use builtin;
+use builtin::BuiltinMap;
 use parser;
 use parser::AST;
 use readline::*;
@@ -9,6 +10,7 @@ use std::process::Command;
 static WAVE_EMOJI: &'static str = "\u{1F30A}";
 
 pub fn input_loop() {
+    let mut builtins = builtin::init_builtins();
     loop {
         let input = readline(&get_prompt_string());
         let line = match input {
@@ -43,7 +45,7 @@ pub fn input_loop() {
             continue;
         }
 
-        if let Err(e) = execute(&tokens) {
+        if let Err(e) = execute(&mut builtins, &tokens) {
             println!("{}", e);
         }
     }
@@ -58,9 +60,9 @@ fn get_prompt_string() -> String {
     format!("{}{}  ", pwd, WAVE_EMOJI)
 }
 
-fn execute(args: &Vec<String>) -> io::Result<i32> {
-    if is_builtin(&args[0]) {
-        return exec_builtin(&args)
+fn execute(builtins: &mut BuiltinMap, args: &Vec<String>) -> io::Result<i32> {
+    if let Some(cmd) = builtins.get_mut(&args[0]) {
+        return cmd.run(&args[1..]);
     }
 
     let mut child = try!(Command::new(&args[0])
