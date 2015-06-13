@@ -1,2 +1,3 @@
 language: rust
-rust: 1.2.0-nightly
+rust:
+  - 1.2.0
