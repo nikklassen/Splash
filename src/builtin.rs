@@ -5,6 +5,7 @@ use std::path::{PathBuf, Component, Path};
 use std::process;
 use getopts::Options;
 use std::collections::HashMap;
+use regex::Regex;
 
 const SUCCESS: io::Result<i32> = Ok(0);
 
@@ -29,8 +30,12 @@ impl Cd {
         self.prev_dir = pwd;
 
         let new_pwd_buf = normalize_logical_path(&p);
-        env::set_var("PWD", &new_pwd_buf);
-        env::set_current_dir(&new_pwd_buf)
+        let result = env::set_current_dir(&new_pwd_buf);
+
+        if result.is_ok() {
+            env::set_var("PWD", &new_pwd_buf);
+        }
+        result
     }
 }
 
@@ -69,7 +74,18 @@ impl Builtin for Cd {
             .map(|p| PathBuf::from(p))
             .or(cur_dir)
             .unwrap();
-        pwd_buf.push(&args[0]);
+
+        let re = Regex::new("^~/(.*)").unwrap();
+        let caps = re.captures(&args[0]).unwrap();
+
+        if caps.len() != 0 {
+            if let Ok(home) = env::var("HOME") {
+                if home.len() != 0 {
+                    pwd_buf.push(home);
+                    pwd_buf.push(caps.at(1).unwrap());
+                }
+            }
+        }
 
         self.change_to(&pwd_buf).and(SUCCESS)
     }

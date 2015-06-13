@@ -2,6 +2,7 @@
 extern crate readline;
 extern crate parser_combinators;
 extern crate getopts;
+extern crate regex;
 
 mod prompt;
 mod parser;

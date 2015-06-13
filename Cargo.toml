@@ -4,6 +4,7 @@ name = "splash"
 version = "0.0.1"
 
 [dependencies]
+regex = "0.1.8"
 getopts = "0.2"
 parser-combinators = "0.5.0"
 
