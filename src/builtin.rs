@@ -1,35 +1,41 @@
 use std::env;
 use std::io::prelude::*;
 use std::io;
-use std::path::{PathBuf, Component};
+use std::path::{PathBuf, Component, Path};
 use std::process;
 use getopts::Options;
-
-struct Builtin {
-    name: &'static str,
-    func: fn(&[String]) -> io::Result<i32>,
-}
-
-static BUILTINS: [Builtin; 4] = [
-    Builtin { name: "cd", func: cd },
-    Builtin { name: "exit", func: exit },
-    Builtin { name: "echo", func: echo },
-    Builtin { name: "pwd", func: pwd },
-];
+use std::collections::HashMap;
 
 const SUCCESS: io::Result<i32> = Ok(0);
 
-pub fn is_builtin(cmd: &String) -> bool {
-    get_builtin(cmd).is_some()
+pub trait Builtin {
+    fn run(&mut self, args: &[String]) -> io::Result<i32>;
 }
 
-fn get_builtin<'a>(cmd: &String) -> Option<&'a Builtin> {
-    BUILTINS.iter().find(|b| {
-        b.name == cmd
-    })
+pub type BuiltinMap = HashMap<String, Box<Builtin>>;
+
+struct Cd {
+    prev_dir: String,
 }
 
-fn normalize_logical_path(path: &PathBuf) -> PathBuf {
+impl Cd {
+    fn new() -> Cd {
+        let pwd = env::var("PWD").unwrap_or(String::new());
+        Cd { prev_dir: pwd }
+    }
+
+    fn change_to<P: AsRef<Path>>(&mut self, p: &P) -> io::Result<()> {
+        let pwd = env::var("PWD").unwrap_or(String::new());
+        self.prev_dir = pwd;
+
+        let new_pwd_buf = normalize_logical_path(&p);
+        env::set_var("PWD", &new_pwd_buf);
+        env::set_current_dir(&new_pwd_buf)
+    }
+}
+
+fn normalize_logical_path<P: AsRef<Path>>(path: &P) -> PathBuf {
+    let path = path.as_ref();
     let mut normalized_path = PathBuf::new();
     for c in path.components() {
         match c {
@@ -41,74 +47,112 @@ fn normalize_logical_path(path: &PathBuf) -> PathBuf {
     normalized_path
 }
 
-pub fn cd(args: &[String]) -> io::Result<i32> {
-    fn change_to(p: &PathBuf) -> io::Result<()> {
-        let new_pwd_buf = normalize_logical_path(p);
-        env::set_var("PWD", &new_pwd_buf);
-        env::set_current_dir(&new_pwd_buf)
-    }
-
-    if args.len() == 0 {
-        if let Ok(home) = env::var("HOME") {
-            if home.len() != 0 {
-                return change_to(&PathBuf::from(&home))
-                    .and(SUCCESS);
+impl Builtin for Cd {
+    fn run(&mut self, args: &[String]) -> io::Result<i32> {
+        if args.len() == 0 {
+            if let Ok(home) = env::var("HOME") {
+                if home.len() != 0 {
+                    return self.change_to(&PathBuf::from(&home))
+                        .and(SUCCESS);
+                }
             }
+            return SUCCESS;
         }
-        return SUCCESS;
+
+        if args[0] == "-" {
+            let prev_dir = self.prev_dir.clone();
+            return self.change_to(&prev_dir).and(SUCCESS);
+        }
+
+        let cur_dir = env::current_dir();
+        let mut pwd_buf = env::var("PWD")
+            .map(|p| PathBuf::from(p))
+            .or(cur_dir)
+            .unwrap();
+        pwd_buf.push(&args[0]);
+
+        self.change_to(&pwd_buf).and(SUCCESS)
     }
-
-    let cur_dir = env::current_dir();
-    let mut pwd_buf = env::var("PWD")
-        .map(|p| PathBuf::from(p))
-        .or(cur_dir)
-        .unwrap();
-    pwd_buf.push(&args[0]);
-
-    change_to(&pwd_buf).and(SUCCESS)
 }
 
-pub fn exit(_args: &[String]) -> io::Result<i32> {
-    process::exit(0)
-}
-
-pub fn pwd(_args: &[String]) -> io::Result<i32> {
-    println!("{}", env::var("PWD").unwrap_or(String::new()));
-    SUCCESS
-}
-
-pub fn echo(args: &[String]) -> io::Result<i32> {
-    let mut opts = Options::new();
-
-    opts.optflag("n", "", "Suppress new lines");
-
-    let matches = match opts.parse(args) {
-        Ok(m) => m,
-        Err(_) => { return Err(
-                        io::Error::new(
-                            io::ErrorKind::InvalidInput,
-                            "Unable to parse arguments.")) },
-    };
-
-    let remaining_args = matches.free.connect(" ");
-
-    if matches.opt_present("n") {
-        print!("{}", remaining_args);
-        try!(io::stdout().flush());
-    } else {
-        println!("{}", remaining_args);
+struct Exit;
+impl Builtin for Exit {
+    fn run(&mut self, _args: &[String]) -> io::Result<i32> {
+        process::exit(0)
     }
-    SUCCESS
 }
 
-pub fn exec_builtin(args: &Vec<String>) -> io::Result<i32> {
-    if let Some(b) = get_builtin(&args[0]) {
-        let f = b.func;
-        f(&args[1..])
-    } else {
-        Err(
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("Builtin \"{}\" not found", args[0])))
+struct Pwd;
+impl Builtin for Pwd {
+    fn run(&mut self, _args: &[String]) -> io::Result<i32> {
+        println!("{}", env::var("PWD").unwrap_or(String::new()));
+        SUCCESS
+    }
+}
+
+struct Echo;
+impl Builtin for Echo {
+    fn run(&mut self, args: &[String]) -> io::Result<i32> {
+        let mut opts = Options::new();
+
+        opts.optflag("n", "", "Suppress new lines");
+
+        let matches = match opts.parse(args) {
+            Ok(m) => m,
+            Err(_) => { return Err(
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Unable to parse arguments.")) },
+        };
+
+        let remaining_args = matches.free.connect(" ");
+
+        if matches.opt_present("n") {
+            print!("{}", remaining_args);
+            try!(io::stdout().flush());
+        } else {
+            println!("{}", remaining_args);
+        }
+        SUCCESS
+    }
+}
+
+macro_rules! add_builtins {
+    ($map:ident, [ $( ($n:expr, $cmd:expr) ),* ] ) => {{
+        $($map.insert(
+                String::from($n),
+                Box::new($cmd) as Box<Builtin>
+                );)*
+    }}
+}
+
+pub fn init_builtins() -> BuiltinMap {
+    let mut builtins = HashMap::new();
+    add_builtins!(
+        builtins,
+        [
+        ("cd", Cd::new()),
+        ("echo", Echo),
+        ("exit", Exit),
+        ("pwd", Pwd)
+        ]);
+    builtins
+}
+
+#[cfg(test)]
+mod tests {
+    use std::env;
+    use super::{Cd, Builtin};
+
+    #[test]
+    fn cd_with_no_args() {
+        let home = String::from("my_home");
+        env::set_var("HOME", &home);
+        env::set_var("PWD", "pwd");
+
+        let mut cd = Cd::new();
+        cd.run(&[]);
+
+        assert_eq!(env::var("PWD"), Ok(home));
     }
 }
