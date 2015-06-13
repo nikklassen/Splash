@@ -76,15 +76,17 @@ impl Builtin for Cd {
             .unwrap();
 
         let re = Regex::new("^~/(.*)").unwrap();
-        let caps = re.captures(&args[0]).unwrap();
-
-        if caps.len() != 0 {
-            if let Ok(home) = env::var("HOME") {
-                if home.len() != 0 {
-                    pwd_buf.push(home);
-                    pwd_buf.push(caps.at(1).unwrap());
+        if let Some(caps) = re.captures(&args[0]) {
+            if caps.len() != 0 {
+                if let Ok(home) = env::var("HOME") {
+                    if home.len() != 0 {
+                        pwd_buf.push(home);
+                        pwd_buf.push(caps.at(1).unwrap());
+                    }
                 }
             }
+        } else {
+            pwd_buf.push(&args[0]);
         }
 
         self.change_to(&pwd_buf).and(SUCCESS)
