@@ -1,4 +1,6 @@
 use builtin::{is_builtin, exec_builtin};
+use parser;
+use parser::AST;
 use readline::*;
 use std::env;
 use std::io;
@@ -17,12 +19,31 @@ pub fn input_loop() {
 
         add_history(&line);
 
-        let tokens : Vec<_> = line.split_whitespace().collect();
+        let parsed = parser::parse_command(&line);
+        if let Err(e) = parsed {
+            println!("Error: {:?}", e.errors);
+            continue;
+        }
+
+        let tokens: Vec<String>;
+        match parsed.unwrap() {
+            Some(ts) => {
+                tokens = ts.into_iter().map(|t| {
+                    match t {
+                        AST::Word(s) => s,
+                    }
+                }).collect();
+            },
+            None => {
+                continue;
+            }
+        }
+
         if tokens.len() == 0 {
             continue;
         }
 
-        if let Err(e) = execute(tokens) {
+        if let Err(e) = execute(&tokens) {
             println!("{}", e);
         }
     }
@@ -37,8 +58,8 @@ fn get_prompt_string() -> String {
     format!("{}{}  ", pwd, WAVE_EMOJI)
 }
 
-fn execute(args : Vec<&str>) -> io::Result<i32> {
-    if is_builtin(args[0]) {
+fn execute(args: &Vec<String>) -> io::Result<i32> {
+    if is_builtin(&args[0]) {
         return exec_builtin(&args)
     }
 
