@@ -49,7 +49,7 @@ fn normalize_logical_path<P: AsRef<Path>>(path: &P) -> PathBuf {
 
 impl Builtin for Cd {
     fn run(&mut self, args: &[String]) -> io::Result<i32> {
-        if args.len() == 0 || args[0] == "~" {
+        if args.len() == 0 {
             if let Ok(home) = env::var("HOME") {
                 if home.len() != 0 {
                     return self.change_to(&PathBuf::from(&home))
@@ -155,18 +155,6 @@ mod tests {
 
         let mut cd = Cd::new();
         cd.run(&[]);
-
-        assert_eq!(env::var("PWD"), Ok(home));
-    }
-
-    #[test]
-    fn cd_with_tilde() {
-        let _g = LOCK.lock().unwrap();
-        let home = String::from("home");
-        env::set_var("HOME", &home);
-
-        let mut cd = Cd::new();
-        cd.run(&["~".to_string()]);
 
         assert_eq!(env::var("PWD"), Ok(home));
     }
