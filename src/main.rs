@@ -8,6 +8,8 @@ mod prompt;
 mod parser;
 mod builtin;
 
+mod tests;
+
 fn main() {
     prompt::input_loop();
 }

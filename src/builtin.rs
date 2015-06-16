@@ -30,12 +30,9 @@ impl Cd {
         self.prev_dir = pwd;
 
         let new_pwd_buf = normalize_logical_path(&p);
-        let result = env::set_current_dir(&new_pwd_buf);
-
-        if result.is_ok() || cfg!(test) {
-            env::set_var("PWD", &new_pwd_buf);
-        }
-        result
+        try!(env::set_current_dir(&new_pwd_buf));
+        env::set_var("PWD", &new_pwd_buf);
+        Ok(())
     }
 }
 
@@ -158,16 +155,13 @@ pub fn init_builtins() -> BuiltinMap {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
+    use std::{env, fs};
     use super::{Cd, Builtin};
-    use std::sync::{StaticMutex, MUTEX_INIT};
+    use tests;
+    use tests::{TestFixture, TestFn};
 
-    static LOCK: StaticMutex = MUTEX_INIT;
-
-    #[test]
     fn cd_with_no_args() {
-        let _g = LOCK.lock().unwrap();
-        let home = String::from("/home");
+        let home = String::from("/");
         env::set_var("HOME", &home);
 
         let mut cd = Cd::new();
@@ -176,38 +170,9 @@ mod tests {
         assert_eq!(env::var("PWD"), Ok(home));
     }
 
-    #[test]
-    fn cd_with_tilde_no_args() {
-        let _g = LOCK.lock().unwrap();
-        let home = String::from("/home");
-        env::set_var("HOME", &home);
-
-        let mut cd = Cd::new();
-        cd.run(&["~".to_string()]);
-
-        assert_eq!(env::var("PWD"), Ok(home));
-    }
-
-    #[test]
-    fn cd_with_tilde_args() {
-        let _g = LOCK.lock().unwrap();
-        let home = String::from("/home");
-        env::set_var("HOME", &home);
-
-        let sub_dir = "/subdir";
-        let new_dir = home + sub_dir;
-        let tilde_expansion = String::from("~");
-
-        let mut cd = Cd::new();
-        cd.run(&[tilde_expansion + sub_dir]);
-
-        assert_eq!(env::var("PWD"), Ok(new_dir));
-    }
-
-    #[test]
     fn cd_with_absolute_arg() {
-        let _g = LOCK.lock().unwrap();
-        let dir = String::from("/dir");
+        let dir = String::from("/");
+        env::set_var("PWD", "pwd");
 
         let mut cd = Cd::new();
         cd.run(&[dir.clone()]);
@@ -215,29 +180,46 @@ mod tests {
         assert_eq!(env::var("PWD"), Ok(dir));
     }
 
-    #[test]
     fn cd_with_relative_arg() {
-        let _g = LOCK.lock().unwrap();
-        let sub_dir = String::from("subdir");
-        let new_dir = env::var("PWD").unwrap() + "/" + &sub_dir;
+        let sub_dir = String::from("tmp");
+        env::set_current_dir("/");
 
         let mut cd = Cd::new();
         cd.run(&[sub_dir.clone()]);
 
+        let new_dir = String::from("/") + &sub_dir;
         assert_eq!(env::var("PWD"), Ok(new_dir));
     }
 
-    #[test]
     fn cd_previous_directory() {
-        let _g = LOCK.lock().unwrap();
-        let pwd = env::var("PWD");
-        let dir = String::from("/dirmod");
-        let prev_dir = String::from("-");
+        let pwd = env::var("PWD").unwrap();
+        let dir = String::from("/");
 
         let mut cd = Cd::new();
         cd.run(&[dir]);
-        cd.run(&[prev_dir]);
+        assert!(cd.run(&[String::from("-")]).is_ok());
 
-        assert_eq!(env::var("PWD"), pwd);
+        assert_eq!(env::var("PWD"), Ok(pwd));
+    }
+
+    #[test]
+    fn cd_tests() {
+        let pwd = env::temp_dir();
+        pwd.push("pwd");
+
+        let setup = || { fs::create_dir(pwd); };
+        let teardown = || { fs::remove_dir(pwd); };
+
+        let tests: Vec<&TestFn> = vec![
+            &cd_with_no_args,
+            &cd_with_absolute_arg,
+            &cd_with_relative_arg,
+            &cd_previous_directory];
+
+        tests::test_runner(tests, TestFixture {
+            setup: Some(&setup),
+            teardown: Some(&teardown),
+            ..TestFixture::new()
+        });
     }
 }
