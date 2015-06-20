@@ -154,72 +154,94 @@ pub fn init_builtins() -> BuiltinMap {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::{env, fs};
+    use std::path::PathBuf;
     use super::{Cd, Builtin};
     use tests;
-    use tests::{TestFixture, TestFn};
+    use tests::{TestFixture, TestList, test_fixture_runner};
 
-    fn cd_with_no_args() {
-        let home = String::from("/");
-        env::set_var("HOME", &home);
-
-        let mut cd = Cd::new();
-        cd.run(&[]);
-
-        assert_eq!(env::var("PWD"), Ok(home));
+    struct BuiltinTests {
+        pwd: PathBuf
     }
 
-    fn cd_with_absolute_arg() {
-        let dir = String::from("/");
-        env::set_var("PWD", "pwd");
+    impl TestFixture for BuiltinTests {
+        fn setup(&mut self) {
+            let mut pwd = env::temp_dir();
+            pwd.push("pwd");
 
-        let mut cd = Cd::new();
-        cd.run(&[dir.clone()]);
+            fs::create_dir(&pwd);
+            self.pwd = pwd;
+            env::set_current_dir(&self.pwd).unwrap();
+        }
 
-        assert_eq!(env::var("PWD"), Ok(dir));
+        fn teardown(&mut self) {
+            fs::remove_dir(&self.pwd);
+        }
+
+        fn tests(&mut self) -> TestList<BuiltinTests> {
+            vec![test!("cd, no args", cd_with_no_args),
+            test!("cd, absolute arg", cd_with_absolute_arg),
+            test!("cd, relative arg", cd_with_relative_arg),
+            test!("cd, previous dir", cd_previous_directory),
+            ]
+        }
     }
 
-    fn cd_with_relative_arg() {
-        let sub_dir = String::from("tmp");
-        env::set_current_dir("/");
+    impl BuiltinTests {
+        fn new() -> BuiltinTests {
+            BuiltinTests {
+                pwd: PathBuf::new()
+            }
+        }
 
-        let mut cd = Cd::new();
-        cd.run(&[sub_dir.clone()]);
+        fn cd_with_no_args(&mut self) {
+            let home = String::from("/");
+            env::set_var("HOME", &home);
 
-        let new_dir = String::from("/") + &sub_dir;
-        assert_eq!(env::var("PWD"), Ok(new_dir));
+            let mut cd = Cd::new();
+            cd.run(&[]).unwrap();
+
+            assert_eq!(env::var("PWD"), Ok(home));
+        }
+
+        fn cd_with_absolute_arg(&mut self) {
+            let dir = String::from("/");
+            env::set_var("PWD", &self.pwd);
+
+            let mut cd = Cd::new();
+            cd.run(&[dir.clone()]).unwrap();
+
+            assert_eq!(env::var("PWD"), Ok(dir));
+        }
+
+        fn cd_with_relative_arg(&mut self) {
+            let mut pwd = self.pwd.clone();
+            pwd.pop();
+            env::set_var("PWD", &pwd);
+            env::set_current_dir("..").unwrap();
+
+            let mut cd = Cd::new();
+            cd.run(&[String::from("pwd")]).unwrap();
+
+            assert_eq!(env::var("PWD"), Ok(pathbuf_to_string(&self.pwd)));
+        }
+
+        fn cd_previous_directory(&mut self) {
+            let mut cd = Cd::new();
+            cd.run(&[String::from("..")]).unwrap();
+            cd.run(&[String::from("-")]).unwrap();
+
+            assert_eq!(env::var("PWD"), Ok(pathbuf_to_string(&self.pwd)));
+        }
     }
 
-    fn cd_previous_directory() {
-        let pwd = env::var("PWD").unwrap();
-        let dir = String::from("/");
-
-        let mut cd = Cd::new();
-        cd.run(&[dir]);
-        assert!(cd.run(&[String::from("-")]).is_ok());
-
-        assert_eq!(env::var("PWD"), Ok(pwd));
+    fn pathbuf_to_string(p: &PathBuf) -> String {
+        String::from((*p).to_str().unwrap())
     }
 
-    #[test]
-    fn cd_tests() {
-        let pwd = env::temp_dir();
-        pwd.push("pwd");
-
-        let setup = || { fs::create_dir(pwd); };
-        let teardown = || { fs::remove_dir(pwd); };
-
-        let tests: Vec<&TestFn> = vec![
-            &cd_with_no_args,
-            &cd_with_absolute_arg,
-            &cd_with_relative_arg,
-            &cd_previous_directory];
-
-        tests::test_runner(tests, TestFixture {
-            setup: Some(&setup),
-            teardown: Some(&teardown),
-            ..TestFixture::new()
-        });
+    pub fn cd_tests() {
+        let builtin_tests = BuiltinTests::new();
+        test_fixture_runner(builtin_tests);
     }
 }

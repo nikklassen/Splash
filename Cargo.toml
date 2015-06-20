@@ -3,6 +3,9 @@
 name = "splash"
 version = "0.0.1"
 
+[profile.dev]
+debug = true
+
 [dependencies]
 regex = "0.1.8"
 getopts = "0.2"

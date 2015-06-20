@@ -1,63 +1,55 @@
 use std::thread;
+use std::sync::{Arc, Mutex};
 
-type EmptyFn = fn() -> ();
-type BeforeEachFn = fn() -> Vec<String>;
-
-pub struct TestFixture<'a> {
-    setup: Option<&'a EmptyFn>,
-    teardown: Option<&'a EmptyFn>,
-    before_each: Option<BeforeEachFn>,
-    after_each: Option<&'a EmptyFn>
-}
-
-impl<'a> TestFixture<'a> {
-    fn new() -> TestFixture<'a> {
-        TestFixture {
-            setup: None,
-            teardown: None,
-            before_each: None,
-            after_each: None,
-        }
+#[export_macro]
+macro_rules! test {
+    ($name: expr, $func: ident) => {
+        (String::from($name), Box::new(Self::$func))
     }
 }
 
-pub trait TestFn {
-    fn run(&self, Vec<String>) -> ();
-}
+pub type TestList<T> = Vec<(String, Box<Fn(&mut T)+Send>)>;
 
-impl<F> TestFn for F
-    where F: Fn() -> () {
-    fn run(&self, args: Vec<String>) {
-        (*self)()
+pub trait TestFixture {
+    fn setup(&mut self) -> () {}
+    fn teardown(&mut self) -> () {}
+    fn before_each(&mut self) -> () {}
+    fn after_each(&mut self) -> () {}
+    fn tests(&mut self) -> TestList<Self> {
+        Vec::new()
     }
 }
 
-pub fn test_runner(tests: Vec<&TestFn>, fixture: TestFixture) {
-    if let Some(setup) = fixture.setup {
-        setup()
-    }
+pub fn test_fixture_runner<T: TestFixture + Send + 'static>(fixture: T) {
+    let fixture_arc = Arc::new(Mutex::new(fixture));
+    test_fixture_inner(fixture_arc);
+}
 
-    let before_each = match fixture.before_each {
-        Some(f) => f,
-        None => (|| { Vec::new() }) as fn() -> Vec<String>,
-    };
+fn test_fixture_inner<T: TestFixture + Send + 'static>(fixture: Arc<Mutex<T>>) {
+    let mut has_failure = false;
 
-    tests.iter().map(|&t| {
-        let before_each_copy = before_each.clone();
+    fixture.lock().unwrap().setup();
+
+    let tests = fixture.lock().unwrap().tests();
+    for (t_name, t) in tests.into_iter() {
+        let fixture = fixture.clone();
+
         let handle = thread::spawn(move || {
-            t.run(before_each_copy());
+            let mut fixture = fixture.lock().unwrap();
+
+            fixture.before_each();
+            t(&mut *fixture);
+            fixture.after_each();
         });
 
-        if let Err(e) = handle.join() {
-            panic!(e);
+        if let Err(_) = handle.join() {
+            println!("{} ... FAILED!", t_name);
+            has_failure = true;
+        } else {
+            println!("{} ... ok", t_name);
         }
-
-        if let Some(after_each) = fixture.after_each {
-            after_each();
-        }
-    });
-
-    if let Some(teardown) = fixture.teardown {
-        teardown();
     }
+
+    fixture.lock().unwrap().teardown();
+    assert!(!has_failure);
 }
