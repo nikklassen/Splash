@@ -80,42 +80,55 @@ mod tests {
     use std::env;
     use std::path::PathBuf;
     use super::{get_prompt_string, WAVE_EMOJI};
+    use test_fixture::*;
 
-    fn prompt_unset_pwd() {
-        let pwd = "my_dir";
-        env::set_var("PWD", pwd);
-        env::remove_var("PWD");
-        let prompt = get_prompt_string();
-        assert_eq!(prompt, WAVE_EMOJI.to_string() + "  ");
+    struct PromptTests;
+
+    impl TestFixture for PromptTests {
+        fn tests(&self) -> TestList<Self> {
+            vec![test!("prompt, unset pwd", prompt_unset_pwd),
+            test!("prompt, includes pwd", prompt_includes_pwd),
+            test!("prompt, includes home", prompt_includes_home),
+            ]
+        }
     }
 
-    fn prompt_includes_pwd() {
-        let pwd = "my_dir";
-        env::set_var("PWD", pwd);
-        let prompt = get_prompt_string();
-        assert!(prompt.starts_with(pwd));
-    }
+    impl PromptTests {
+        fn prompt_unset_pwd(&mut self) {
+            let pwd = "my_dir";
+            env::set_var("PWD", pwd);
+            env::remove_var("PWD");
+            let prompt = get_prompt_string();
+            assert_eq!(prompt, WAVE_EMOJI.to_string() + "  ");
+        }
 
-    fn prompt_includes_home() {
-        let home = "my_home";
-        env::set_var("HOME", home);
-        let dir = "my_dir";
-        env::set_var("PWD", join(home, dir));
-        let prompt = get_prompt_string();
-        assert!(prompt.starts_with(
-                &join("~", dir)));
-    }
+        fn prompt_includes_pwd(&mut self) {
+            let pwd = "my_dir";
+            env::set_var("PWD", pwd);
+            let prompt = get_prompt_string();
+            assert!(prompt.starts_with(pwd));
+        }
 
-    #[test]
-    fn serial_tests() {
-        prompt_unset_pwd();
-        prompt_includes_pwd();
-        prompt_includes_home();
+        fn prompt_includes_home(&mut self) {
+            let home = "my_home";
+            env::set_var("HOME", home);
+            let dir = "my_dir";
+            env::set_var("PWD", join(home, dir));
+            let prompt = get_prompt_string();
+            assert!(prompt.starts_with(
+                    &join("~", dir)));
+        }
     }
 
     fn join<'a>(p1: &str, p2: &str) -> String {
         let mut path: PathBuf = PathBuf::from(p1);
         path.push(p2);
         String::from(path.to_str().unwrap())
+    }
+
+    #[test]
+    fn prompt_tests() {
+        let fixture = PromptTests;
+        test_fixture_runner(fixture);
     }
 }

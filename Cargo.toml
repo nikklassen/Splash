@@ -3,6 +3,9 @@
 name = "splash"
 version = "0.0.1"
 
+[profile.dev]
+debug = true
+
 [dependencies]
 getopts = "0.2"
 parser-combinators = "0.5.0"
