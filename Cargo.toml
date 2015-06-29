@@ -9,6 +9,7 @@ debug = true
 [dependencies]
 getopts = "0.2"
 parser-combinators = "0.5.0"
+nix = "0.3.7"
 
 [dependencies.readline]
 git = "https://github.com/evadnoob/rust-readline.git"
