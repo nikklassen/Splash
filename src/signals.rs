@@ -21,10 +21,4 @@ pub fn initialize_signals() {
     }
 }
 
-pub extern fn handle_signal(code: i32) {
-    match code {
-        signal::SIGINT => {}
-        signal::SIGTSTP => {}
-        _ => {}
-    }
-}
+pub extern fn handle_signal(_: i32) {}
