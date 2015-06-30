@@ -1,11 +1,11 @@
-#![allow(unused_features)]
-#![feature(static_mutex)]
 #![feature(box_syntax)]
+#![feature(libc)]
 
 extern crate readline;
 extern crate parser_combinators;
 extern crate getopts;
 extern crate nix;
+extern crate libc;
 
 #[cfg(test)]
 #[macro_use]
@@ -16,15 +16,9 @@ mod parser;
 mod builtin;
 mod signals;
 
-use signals::handle_signal;
-use nix::sys::signal;
+use signals::initialize_signals;
 
 fn main() {
-    let sig_action = signal::SigAction::new(
-        handle_signal,
-        signal::SockFlag::empty(),
-        signal::SigSet::empty()
-    );
-    unsafe { signal::sigaction(signal::SIGINT, &sig_action); }
+    initialize_signals();
     prompt::input_loop();
 }
