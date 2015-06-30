@@ -1,3 +1,6 @@
+#![allow(unused_features)]
+#![feature(std_misc)]
+#![feature(static_mutex)]
 #![feature(box_syntax)]
 #![feature(libc)]
 
