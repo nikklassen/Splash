@@ -10,9 +10,17 @@ extern crate getopts;
 #[macro_use]
 mod test_fixture;
 
+macro_rules! is_match {
+    ($e: expr, $p: pat) => ((
+        if let $p = $e { true } else { false }
+    ))
+}
+
 mod prompt;
-mod parser;
+mod lexer;
 mod builtin;
+mod tokenizer;
+mod interpolate;
 
 fn main() {
     prompt::input_loop();

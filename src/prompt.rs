@@ -1,10 +1,7 @@
-use builtin;
-use builtin::BuiltinMap;
-use parser;
-use parser::AST;
+use builtin::{self, BuiltinMap};
+use lexer::{self, Op};
 use readline::*;
-use std::env;
-use std::io;
+use std::{env, io};
 use std::process::Command;
 
 static WAVE_EMOJI: &'static str = "\u{1F30A}";
@@ -21,31 +18,18 @@ pub fn input_loop() {
 
         add_history(&line);
 
-        let parsed = parser::parse_command(&line);
+        let parsed = lexer::parse(&line);
         if let Err(e) = parsed {
-            println!("Error: {:?}", e.errors);
+            println!("Error: {:?}", e);
             continue;
         }
 
-        let tokens: Vec<String>;
-        match parsed.unwrap() {
-            Some(ts) => {
-                tokens = ts.into_iter().map(|t| {
-                    match t {
-                        AST::Word(s) => s,
-                    }
-                }).collect();
-            },
-            None => {
-                continue;
-            }
-        }
-
-        if tokens.len() == 0 {
+        let command = parsed.unwrap();
+        if command.is_none() {
             continue;
         }
 
-        if let Err(e) = execute(&mut builtins, &tokens) {
+        if let Err(e) = execute(&mut builtins, command.unwrap()) {
             println!("{}", e);
         }
     }
@@ -60,13 +44,15 @@ fn get_prompt_string() -> String {
     format!("{}{}  ", pwd, WAVE_EMOJI)
 }
 
-fn execute(builtins: &mut BuiltinMap, args: &Vec<String>) -> io::Result<i32> {
-    if let Some(cmd) = builtins.get_mut(&args[0]) {
-        return cmd.run(&args[1..]);
+fn execute(builtins: &mut BuiltinMap, command: Op) -> io::Result<i32> {
+    let Op::Cmd { prog, args } = command;
+
+    if let Some(cmd) = builtins.get_mut(&prog) {
+        return cmd.run(&args[..]);
     }
 
-    let mut child = try!(Command::new(&args[0])
-        .args(&args[1..])
+    let mut child = try!(Command::new(&prog)
+        .args(&args[..])
         .spawn());
 
     child.wait()
