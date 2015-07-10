@@ -1,13 +1,16 @@
 use builtin::{self, BuiltinMap};
+use env::UserEnv;
 use lexer::{self, Op};
 use readline::*;
-use std::{env, io};
 use std::process::Command;
+use std::{env, io};
 
 static WAVE_EMOJI: &'static str = "\u{1F30A}";
 
 pub fn input_loop() {
     let mut builtins = builtin::init_builtins();
+    let mut user_env = UserEnv::new();
+
     loop {
         let input = readline(&get_prompt_string());
         let line = match input {
@@ -18,7 +21,7 @@ pub fn input_loop() {
 
         add_history(&line);
 
-        let parsed = lexer::parse(&line);
+        let parsed = lexer::parse(&line, &user_env);
         if let Err(e) = parsed {
             println!("Error: {:?}", e);
             continue;
@@ -29,7 +32,7 @@ pub fn input_loop() {
             continue;
         }
 
-        if let Err(e) = execute(&mut builtins, command.unwrap()) {
+        if let Err(e) = execute(&mut builtins, &mut user_env, command.unwrap()) {
             println!("{}", e);
         }
     }
@@ -44,14 +47,24 @@ fn get_prompt_string() -> String {
     format!("{}{}  ", pwd, WAVE_EMOJI)
 }
 
-fn execute(builtins: &mut BuiltinMap, command: Op) -> io::Result<i32> {
-    let Op::Cmd { prog, args } = command;
+fn execute(builtins: &mut BuiltinMap, user_env: &mut UserEnv, command: Op) -> io::Result<i32> {
+    match command {
+        Op::Cmd { prog, args } => run_cmd(builtins, &prog, &args),
+        Op::EqlStmt { lhs, rhs } => {
+            let entry = user_env.vars.entry(lhs)
+                .or_insert("".to_string());
+            *entry = rhs;
+            Ok(0)
+        }
+    }
+}
 
-    if let Some(cmd) = builtins.get_mut(&prog) {
+fn run_cmd(builtins: &mut BuiltinMap, prog: &String, args: &Vec<String>) -> io::Result<i32> {
+    if let Some(cmd) = builtins.get_mut(prog) {
         return cmd.run(&args[..]);
     }
 
-    let mut child = try!(Command::new(&prog)
+    let mut child = try!(Command::new(prog)
         .args(&args[..])
         .spawn());
 
@@ -63,9 +76,12 @@ fn execute(builtins: &mut BuiltinMap, command: Op) -> io::Result<i32> {
 
 #[cfg(test)]
 mod tests {
+    use builtin;
+    use env::UserEnv;
+    use lexer::Op;
     use std::env;
     use std::path::PathBuf;
-    use super::{get_prompt_string, WAVE_EMOJI};
+    use super::{get_prompt_string, WAVE_EMOJI, execute};
     use test_fixture::*;
 
     struct PromptTests;
@@ -116,5 +132,18 @@ mod tests {
     fn prompt_tests() {
         let fixture = PromptTests;
         test_fixture_runner(fixture);
+    }
+
+    #[test]
+    fn add_var() {
+        let mut builtins = builtin::init_builtins();
+        let mut user_env = UserEnv::new();
+
+        execute(&mut builtins, &mut user_env, Op::EqlStmt {
+            lhs: "FOO".to_string(),
+            rhs: "bar".to_string()
+        });
+
+        assert_eq!(user_env.vars["FOO"], "bar".to_string());
     }
 }

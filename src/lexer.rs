@@ -1,7 +1,8 @@
-use parser_combinators::{token, optional, satisfy, many1, parser, ParserExt};
-use parser_combinators::primitives::{ParseResult, State, Stream, Positioner, Parser, from_iter};
-use tokenizer::{self, AST};
+use env::UserEnv;
 use interpolate;
+use parser_combinators::*;
+use parser_combinators::primitives::{State, Stream, Positioner};
+use tokenizer::{self, AST};
 
 #[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
 pub enum Op {
@@ -9,6 +10,10 @@ pub enum Op {
         prog: String,
         args: Vec<String>,
     },
+    EqlStmt {
+        lhs: String,
+        rhs: String
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -39,23 +44,49 @@ impl Positioner for Op {
     }
 }
 
-fn args<I>(input: State<I>) -> ParseResult<Vec<Vec<AST>>, I, AST>
+fn args<I>(input: State<I>) -> primitives::ParseResult<AST, I, AST>
 where I: Stream<Item=AST> {
-    many1(many1(satisfy(|t| t != AST::Whitespace))
-          .skip(optional(token(AST::Whitespace)))
-         )
-        .parse_state(input)
+    many1(satisfy(|t| t != AST::Whitespace))
+        .map(|arg: Vec<AST>| {
+            let value = arg
+            .into_iter()
+            .fold(String::new(), |mut acc, a| {
+                if let Some(ref v) = to_value(a) {
+                    acc.push_str(&v);
+                }
+                acc
+            });
+            AST::String(value)
+        })
+    .parse_state(input)
 }
 
-fn command<I>(input: State<I>) -> ParseResult<Op, I, AST>
+fn to_value(a: AST) -> Option<String> {
+    match a {
+        AST::String(s) => Some(s),
+        AST::Quoted(contents) => Some(contents.into_iter().fold(String::new(), |mut acc: String, t| {
+            let v = to_value(t);
+            if v.is_none() {
+                return acc;
+            }
+            acc.push_str(&v.unwrap());
+            acc
+        })),
+        _ => None,
+    }
+}
+
+fn command<I>(input: State<I>) -> primitives::ParseResult<Op, I, AST>
 where I: Stream<Item=AST> {
-    optional(token(AST::Whitespace))
-        .with(parser(args::<I>))
+    many1(
+        parser(args::<I>)
         .skip(optional(token(AST::Whitespace)))
-        .map(|args: Vec<Vec<AST>>| {
+        )
+        .map(|args: Vec<AST>| {
             let mut string_args: Vec<String> = args
-            .iter()
-            .map(interpolate::expand).collect();
+            .into_iter()
+            .map(|a| to_value(a).unwrap_or("".to_string()))
+            .collect();
             let prog = string_args.remove(0);
             Op::Cmd {
                 prog: prog,
@@ -65,30 +96,58 @@ where I: Stream<Item=AST> {
     .parse_state(input)
 }
 
-pub fn parse(line: &str) -> Result<Option<Op>, String> {
-    let tokens: Vec<AST> = try!(tokenizer::tokenize(&line));
-    println!("{:?}", tokens);
+fn assignment<I>(input: State<I>) -> primitives::ParseResult<Op, I, AST>
+where I: Stream<Item=AST> {
+    try(satisfy(|t| is_match!(t, AST::String(_)))
+        .skip(token(AST::Eql)))
+        .and(parser(args::<I>))
+        .map(|(lhs, rhs)| {
+            Op::EqlStmt {
+                lhs: to_value(lhs).unwrap(),
+                rhs: to_value(rhs).unwrap()
+            }
+        })
+    .parse_state(input)
+}
+
+fn stmt<I>(input: State<I>) -> primitives::ParseResult<Op, I, AST>
+where I: Stream<Item=AST> {
+    optional(token(AST::Whitespace))
+        .with(choice([assignment::<I> as fn(State<I>) -> primitives::ParseResult<Op, I, AST>, command::<I> as fn(State<I>) -> primitives::ParseResult<Op, I, AST>]))
+        .skip(optional(token(AST::Whitespace)))
+        .skip(not_followed_by(any()))
+        .parse_state(input)
+}
+
+
+pub fn parse(line: &str, user_env: &UserEnv) -> Result<Option<Op>, String> {
+    let mut tokens: Vec<AST> = try!(tokenizer::tokenize(&line));
     if tokens.is_empty() {
         return Ok(None);
     }
-    parser(command).parse(from_iter(tokens.iter().cloned()))
+    tokens = interpolate::expand(tokens, &user_env);
+    parser(stmt)
+        .parse(primitives::from_iter(tokens.iter().cloned()))
         .map(|r| Some(r.0))
         .or_else(|e| Err(format!("{:?}", e.errors)))
 }
 
 #[cfg(test)]
 mod tests {
+    use env::UserEnv;
     use super::*;
 
     #[test]
     fn parse_empty() {
-        let cmd = parse("");
+        let user_env = UserEnv::new();
+        let cmd = parse("", &user_env);
         assert_eq!(cmd, Ok(None));
     }
 
     #[test]
     fn parse_cmd_no_args() {
-        let cmd = parse("cmd").unwrap().unwrap();
+        let user_env = UserEnv::new();
+        let cmd = parse("cmd", &user_env).unwrap().unwrap();
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: Vec::new(),
@@ -97,7 +156,8 @@ mod tests {
 
     #[test]
     fn parse_cmd_multiple_args() {
-        let cmd = parse("cmd arg1 arg2").unwrap().unwrap();
+        let user_env = UserEnv::new();
+        let cmd = parse("cmd arg1 arg2", &user_env).unwrap().unwrap();
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: vec!["arg1".to_string(), "arg2".to_string()],
@@ -106,10 +166,38 @@ mod tests {
 
     #[test]
     fn parse_cmd_with_string_arg() {
-        let cmd = parse(r#"cmd "arg1 $VAR arg2""#).unwrap().unwrap();
+        let user_env = UserEnv::new();
+        let cmd = parse(r#"cmd "arg1 $VAR arg2""#, &user_env).unwrap().unwrap();
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: vec!["arg1  arg2".to_string()],
         });
+    }
+
+    #[test]
+    fn parse_cmd_with_connected_args() {
+        let user_env = UserEnv::new();
+        let cmd = parse(r#"cmd arg1"arg2 arg3"$TEST'arg4 arg5'"#, &user_env).unwrap().unwrap();
+        assert_eq!(cmd, Op::Cmd {
+            prog: "cmd".to_string(),
+            args: vec!["arg1arg2 arg3arg4 arg5".to_string()],
+        });
+    }
+
+    #[test]
+    fn parse_eql_stmt() {
+        let user_env = UserEnv::new();
+        let cmd = parse("FOO=bar", &user_env).unwrap().unwrap();
+        assert_eq!(cmd, Op::EqlStmt {
+            lhs: "FOO".to_string(),
+            rhs: "bar".to_string()
+        });
+    }
+
+    #[test]
+    fn parse_eql_trailing_arg_fails() {
+        let user_env = UserEnv::new();
+        let cmd = parse("FOO=bar baz", &user_env);
+        assert!(cmd.is_err());
     }
 }

@@ -16,11 +16,12 @@ macro_rules! is_match {
     ))
 }
 
-mod prompt;
-mod lexer;
 mod builtin;
-mod tokenizer;
+mod env;
 mod interpolate;
+mod lexer;
+mod prompt;
+mod tokenizer;
 
 fn main() {
     prompt::input_loop();

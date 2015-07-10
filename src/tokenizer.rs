@@ -1,9 +1,19 @@
+use std::fmt::{Display, Formatter, Error};
+
 #[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
 pub enum AST {
     Whitespace,
     String(String),
     Quoted(Vec<AST>),
     Var(String),
+    Eql,
+}
+
+impl Display for AST {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        try!(write!(f, "{:?}", self));
+        Ok(())
+    }
 }
 
 type ASTResult = Result<Option<AST>, String>;
@@ -17,7 +27,6 @@ struct CharReader {
 impl CharReader {
     fn new(s: String) -> Self {
         let s_chars: Vec<_> = s.chars().collect();
-        println!("chars: {:?}", s_chars);
         let mut first = None;
         if !s_chars.is_empty() {
             first = Some(s_chars[0]);
@@ -67,13 +76,19 @@ fn ws_tok(reader: &mut CharReader) -> ASTResult {
     }
 }
 
+fn eql_tok(reader: &mut CharReader) -> ASTResult {
+    if let Some('=') = reader.current {
+        reader.advance();
+        return Ok(Some(AST::Eql));
+    }
+    Ok(None)
+}
+
 fn escaped_tok(reader: &mut CharReader) -> ASTResult {
     if let Some('\\') = reader.current {
-        println!("Found backslash");
         let prev: usize = reader.pos;
         reader.advance();
         if let Some(c) = reader.current {
-            println!("Found escaped {}", c);
             reader.advance();
             return Ok(Some(AST::String(c.to_string())));
         } else {
@@ -107,7 +122,6 @@ fn lit_string_tok(reader: &mut CharReader) -> ASTResult {
 fn quotemark_tok(reader: &mut CharReader) -> ASTResult {
     if let Some('"') = reader.current {
         reader.advance();
-        println!("Current {:?}", reader.current);
         let tokenizers: Vec<_> = vec![escaped_tok as fn(&mut CharReader) -> ASTResult, var_tok];
         let tokens = try!(tokenize_loop(reader, tokenizers, |reader| {
             reader.current.and_then(|c| {
@@ -164,7 +178,6 @@ fn tokenize_loop<F: Fn(&mut CharReader) -> Option<char>>(
 
     let mut f = true;
     while let Some(c) = loop_cond(reader) {
-        //println!("c: '{}'", c);
         let mut token = None;
         for tokenizer in tokenizers.iter() {
             token = try!(tokenizer(reader));
@@ -173,7 +186,6 @@ fn tokenize_loop<F: Fn(&mut CharReader) -> Option<char>>(
             }
         }
         if f {
-            println!("Token: {:?}", token);
             f = false;
         }
         if token.is_none() {
@@ -195,58 +207,50 @@ fn tokenize_loop<F: Fn(&mut CharReader) -> Option<char>>(
 
 pub fn tokenize(s: &str) -> Result<Vec<AST>, String> {
     let mut reader = CharReader::new(s.to_string());
-    let tokenizers: Vec<_> = vec![ws_tok as fn(&mut CharReader) -> ASTResult, escaped_tok, lit_string_tok, quotemark_tok, var_tok];
+    let tokenizers: Vec<_> = vec![ws_tok as fn(&mut CharReader) -> ASTResult, escaped_tok, lit_string_tok, quotemark_tok, var_tok, eql_tok];
     tokenize_loop(&mut reader, tokenizers, |reader| reader.current)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fmt::Debug;
     use super::*;
 
     fn to_string(s: &str) -> AST {
-println!("to_string");
         AST::String(s.to_string())
     }
 
     #[test]
     fn parse_single_word() {
-println!("parse_single_word");
         let word = tokenize("cmd").unwrap();
         assert_eq!(word, vec![to_string("cmd")]);
     }
 
     #[test]
     fn parse_multiple_words() {
-println!("parse_multiple_words");
         let word = tokenize("hello world").unwrap();
         assert_eq!(word, vec![to_string("hello"), AST::Whitespace, to_string("world")]);
     }
 
     #[test]
     fn parse_leading_ws() {
-println!("parse_leading_ws");
         let word = tokenize("    cmd").unwrap();
         assert_eq!(word, vec![AST::Whitespace, to_string("cmd")]);
     }
 
     #[test]
     fn parse_trailing_ws() {
-println!("parse_trailing_ws");
         let word = tokenize("cmd    ").unwrap();
         assert_eq!(word, vec![to_string("cmd"), AST::Whitespace]);
     }
 
     #[test]
     fn parse_empty_cmd() {
-println!("parse_empty_cmd");
         let word = tokenize("").unwrap();
         assert_eq!(word, Vec::new());
     }
 
     #[test]
     fn parse_quotemark() {
-println!("parse_quotemark");
         let t = tokenize(r#""hello world""#).unwrap();
         assert_eq!(t, vec![AST::Quoted(
                 vec![to_string("hello world")]
@@ -255,7 +259,6 @@ println!("parse_quotemark");
 
     #[test]
     fn parse_string_with_escaped() {
-println!("parse_string_with_escaped");
         let t = tokenize(r#""hello \"""#).unwrap();
         assert_eq!(t, vec![AST::Quoted(
                 vec![to_string("hello "), to_string("\"")]
@@ -264,42 +267,36 @@ println!("parse_string_with_escaped");
 
     #[test]
     fn parse_unterminated_string() {
-println!("parse_unterminated_string");
         let t = tokenize(r#""hello"#);
         assert!(t.is_err());
     }
 
     #[test]
     fn parse_literal_string() {
-println!("parse_literal_string");
         let t = tokenize("'hello world'").unwrap();
         assert_eq!(t, vec![to_string("hello world")]);
     }
 
     #[test]
     fn parse_literal_string_unclosed_fails() {
-println!("parse_literal_string_unclosed_fails");
         let t = tokenize("'hello");
         assert!(t.is_err());
     }
 
     #[test]
     fn parse_var() {
-println!("parse_var");
         let t = tokenize("$ABC").unwrap();
         assert_eq!(t, vec![AST::Var("ABC".to_string())]);
     }
 
     #[test]
     fn parse_escaped_var() {
-println!("parse_escaped_var");
         let t = tokenize(r#"\$ABC"#).unwrap();
         assert_eq!(t, vec![to_string("$"), to_string("ABC")]);
     }
 
     #[test]
     fn parse_escaped_string() {
-println!("parse_escaped_string");
         let t = tokenize(r#"\"hello"#).unwrap();
         assert_eq!(t, vec![to_string("\""), to_string("hello")]);
     }
