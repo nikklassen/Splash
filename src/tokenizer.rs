@@ -120,27 +120,27 @@ fn lit_string_tok(reader: &mut CharReader) -> ASTResult {
 }
 
 fn quotemark_tok(reader: &mut CharReader) -> ASTResult {
+    if !is_match!(reader.current, Some('"')) {
+        return Ok(None);
+    }
+
+    reader.advance();
+    let tokenizers: Vec<_> = vec![escaped_tok as fn(&mut CharReader) -> ASTResult, var_tok];
+    let tokens = try!(tokenize_loop(reader, tokenizers, |reader| {
+        reader.current.and_then(|c| {
+            if c == '"' {
+                None
+            } else {
+                Some(c)
+            }
+        })
+    }));
+
     if let Some('"') = reader.current {
         reader.advance();
-        let tokenizers: Vec<_> = vec![escaped_tok as fn(&mut CharReader) -> ASTResult, var_tok];
-        let tokens = try!(tokenize_loop(reader, tokenizers, |reader| {
-            reader.current.and_then(|c| {
-                if c == '"' {
-                    None
-                } else {
-                    Some(c)
-                }
-            })
-        }));
-
-        if let Some('"') = reader.current {
-            reader.advance();
-            Ok(Some(AST::Quoted(tokens)))
-        } else {
-            Err("Unterminated string".to_string())
-        }
+        Ok(Some(AST::Quoted(tokens)))
     } else {
-        Ok(None)
+        Err("Unterminated string".to_string())
     }
 }
 
@@ -176,7 +176,6 @@ fn tokenize_loop<F: Fn(&mut CharReader) -> Option<char>>(
     let mut tokens = Vec::<AST>::new();
     let mut word = String::new();
 
-    let mut f = true;
     while let Some(c) = loop_cond(reader) {
         let mut token = None;
         for tokenizer in tokenizers.iter() {
@@ -185,9 +184,7 @@ fn tokenize_loop<F: Fn(&mut CharReader) -> Option<char>>(
                 break;
             }
         }
-        if f {
-            f = false;
-        }
+
         if token.is_none() {
             word.push(c);
             reader.advance();

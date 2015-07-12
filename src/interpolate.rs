@@ -10,7 +10,7 @@ fn expand_arg(arg: AST, user_env: &UserEnv) -> AST {
                 .map(|value| value.clone())
                 .unwrap_or_else(|| {
                     env::var(&v)
-                    .unwrap_or("".to_string())
+                    .unwrap_or(String::new())
                 });
             return AST::String(s);
         },
