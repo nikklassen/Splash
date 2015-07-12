@@ -41,9 +41,9 @@ pub fn input_loop() {
 fn get_prompt_string() -> String {
     let pwd = env::var("PWD")
         .map(|v| {
-            let home = env::var("HOME").unwrap_or("".to_string());
+            let home = env::var("HOME").unwrap_or(String::new());
             v.replace(&home, "~") + " "
-        }).unwrap_or("".to_string());
+        }).unwrap_or(String::new());
     format!("{}{}  ", pwd, WAVE_EMOJI)
 }
 
@@ -52,7 +52,7 @@ fn execute(builtins: &mut BuiltinMap, user_env: &mut UserEnv, command: Op) -> io
         Op::Cmd { prog, args } => run_cmd(builtins, &prog, &args),
         Op::EqlStmt { lhs, rhs } => {
             let entry = user_env.vars.entry(lhs)
-                .or_insert("".to_string());
+                .or_insert(String::new());
             *entry = rhs;
             Ok(0)
         }
@@ -142,7 +142,7 @@ mod tests {
         execute(&mut builtins, &mut user_env, Op::EqlStmt {
             lhs: "FOO".to_string(),
             rhs: "bar".to_string()
-        });
+        }).unwrap();
 
         assert_eq!(user_env.vars["FOO"], "bar".to_string());
     }

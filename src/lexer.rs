@@ -44,7 +44,7 @@ impl Positioner for Op {
     }
 }
 
-fn args<I>(input: State<I>) -> primitives::ParseResult<AST, I, AST>
+fn arg<I>(input: State<I>) -> primitives::ParseResult<AST, I, AST>
 where I: Stream<Item=AST> {
     many1(satisfy(|t| t != AST::Whitespace))
         .map(|arg: Vec<AST>| {
@@ -79,13 +79,13 @@ fn to_value(a: AST) -> Option<String> {
 fn command<I>(input: State<I>) -> primitives::ParseResult<Op, I, AST>
 where I: Stream<Item=AST> {
     many1(
-        parser(args::<I>)
+        parser(arg::<I>)
         .skip(optional(token(AST::Whitespace)))
         )
         .map(|args: Vec<AST>| {
             let mut string_args: Vec<String> = args
             .into_iter()
-            .map(|a| to_value(a).unwrap_or("".to_string()))
+            .map(|a| to_value(a).unwrap_or(String::new()))
             .collect();
             let prog = string_args.remove(0);
             Op::Cmd {
@@ -100,7 +100,7 @@ fn assignment<I>(input: State<I>) -> primitives::ParseResult<Op, I, AST>
 where I: Stream<Item=AST> {
     try(satisfy(|t| is_match!(t, AST::String(_)))
         .skip(token(AST::Eql)))
-        .and(parser(args::<I>))
+        .and(parser(arg::<I>))
         .map(|(lhs, rhs)| {
             Op::EqlStmt {
                 lhs: to_value(lhs).unwrap(),
