@@ -5,21 +5,21 @@
 extern crate readline;
 extern crate parser_combinators;
 extern crate getopts;
+extern crate nix;
+extern crate libc;
+
+#[macro_use]
+mod util;
 
 #[cfg(test)]
 #[macro_use]
 mod test_fixture;
 
-macro_rules! is_match {
-    ($e: expr, $p: pat) => ((
-        if let $p = $e { true } else { false }
-    ))
-}
-
 mod builtin;
 mod env;
 mod interpolate;
 mod lexer;
+mod process;
 mod prompt;
 mod tokenizer;
 

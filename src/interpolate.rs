@@ -17,7 +17,7 @@ fn expand_arg(arg: AST, user_env: &UserEnv) -> AST {
         AST::Quoted(ts) => {
             return AST::Quoted(expand(ts.to_owned(), user_env));
         },
-        AST::Whitespace | AST::String(_) | AST::Eql => {},
+        _ => {},
     };
     arg
 }

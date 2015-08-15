@@ -7,6 +7,7 @@ pub enum AST {
     Quoted(Vec<AST>),
     Var(String),
     Eql,
+    Pipe,
 }
 
 impl Display for AST {
@@ -76,12 +77,22 @@ fn ws_tok(reader: &mut CharReader) -> ASTResult {
     }
 }
 
-fn eql_tok(reader: &mut CharReader) -> ASTResult {
-    if let Some('=') = reader.current {
-        reader.advance();
-        return Ok(Some(AST::Eql));
+fn char_tok(reader: &mut CharReader, token: char, tt: AST) -> ASTResult {
+    if let Some(c) = reader.current {
+        if token == c {
+            reader.advance();
+            return Ok(Some(tt));
+        }
     }
     Ok(None)
+}
+
+fn eql_tok(reader: &mut CharReader) -> ASTResult {
+    char_tok(reader, '=', AST::Eql)
+}
+
+fn pipe_tok(reader: &mut CharReader) -> ASTResult {
+    char_tok(reader, '|', AST::Pipe)
 }
 
 fn escaped_tok(reader: &mut CharReader) -> ASTResult {
@@ -204,7 +215,15 @@ fn tokenize_loop<F: Fn(&mut CharReader) -> Option<char>>(
 
 pub fn tokenize(s: &str) -> Result<Vec<AST>, String> {
     let mut reader = CharReader::new(s.to_string());
-    let tokenizers: Vec<_> = vec![ws_tok as fn(&mut CharReader) -> ASTResult, escaped_tok, lit_string_tok, quotemark_tok, var_tok, eql_tok];
+    let tokenizers: Vec<_> = vec!(
+        ws_tok as fn(&mut CharReader) -> ASTResult,
+        escaped_tok,
+        lit_string_tok,
+        quotemark_tok,
+        var_tok,
+        eql_tok,
+        pipe_tok);
+
     tokenize_loop(&mut reader, tokenizers, |reader| reader.current)
 }
 

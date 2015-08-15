@@ -1,5 +1,5 @@
-use std::thread;
 use std::sync::{Arc, Mutex, StaticMutex, MUTEX_INIT};
+use std::thread;
 
 static TEST_LOCK: StaticMutex = MUTEX_INIT;
 
@@ -35,17 +35,23 @@ fn test_fixture_inner<T: TestFixture + Send + 'static>(fixture: Arc<Mutex<T>>) {
 
     let tests = fixture.lock().unwrap().tests();
     for (t_name, t) in tests.into_iter() {
+
         let fixture = fixture.clone();
 
-        let handle = thread::spawn(move || {
-            let mut fixture = fixture.lock().unwrap();
+        let handle = thread::Builder::new()
+            .name(t_name.clone())
+            .spawn(move || {
+                let mut fixture = fixture.lock().unwrap();
 
-            fixture.before_each();
-            t(&mut *fixture);
-            fixture.after_each();
-        });
+                fixture.before_each();
+                t(&mut *fixture);
+                fixture.after_each();
+            })
+            .unwrap();
 
-        if let Err(_) = handle.join() {
+        let result = handle.join();
+
+        if let Err(_) = result {
             println!("{} ... FAILED!", t_name);
             has_failure = true;
         } else {
