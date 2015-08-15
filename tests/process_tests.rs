@@ -1,15 +1,24 @@
 use std::process::Command;
+use std::env;
 
 fn run_command(cmd: &str) -> (i32, String) {
+    let build_dir = env::var("SPLASH_BUILD_DIR").unwrap_or(String::from("target/debug"));
     let output = Command::new("sh")
         .arg("-c")
         .arg(format!("echo \"{}\" | splash", cmd))
-        .env("PATH", "/bin:/usr/bin:target/debug")
+        .env("PATH", format!("/bin:/usr/bin:{}", build_dir))
         .output()
         .unwrap_or_else(|e| { panic!("failed to execute process: {}", e) });
 
     let stdout = String::from_utf8(output.stdout).unwrap();
     (output.status.code().unwrap(), stdout)
+}
+
+#[test]
+fn foo() {
+    let (ecode, output) = run_command("pwd");
+    println!("ecode: {}", ecode);
+    println!("output: {}", output);
 }
 
 #[test]
