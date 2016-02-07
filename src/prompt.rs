@@ -2,8 +2,9 @@ use builtin::{self, BuiltinMap};
 use env::UserEnv;
 use lexer::{self, Op};
 use process;
-use readline::*;
+use readline::{readline_bare, add_history, Error, ReadlineBytes};
 use std::env;
+use std::ffi::CString;
 use std::io::{self, Write};
 use std::process::exit;
 
@@ -15,14 +16,15 @@ pub fn input_loop() {
 
     let mut last_status = 0;
     loop {
-        let input = readline(&get_prompt_string());
+        let input = readline();
         let line = match input {
-            Ok(l) => l,
+            Ok(ref l) => {
+                add_history(l);
+                l.to_string_lossy().into_owned()
+            },
             // ^D
             Err(_) => break,
         };
-
-        add_history(&line);
 
         let parsed = lexer::parse(&line, &user_env);
 
@@ -48,6 +50,11 @@ pub fn input_loop() {
     }
 
     exit(last_status);
+}
+
+fn readline() -> Result<ReadlineBytes, Error> {
+    let prompt = CString::new(get_prompt_string()).unwrap();
+    readline_bare(&prompt)
 }
 
 fn get_prompt_string() -> String {

@@ -1,5 +1,5 @@
 language: rust
 
-rust: nightly
+rust: 1.6.0
 
 before_script: SPASH_BUILD_DIR=$TRAVIS_BUILD_DIR

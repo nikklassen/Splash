@@ -1,7 +1,7 @@
 use env::UserEnv;
 use interpolate;
-use parser_combinators::*;
-use parser_combinators::primitives::{State, Stream, Positioner};
+use combine::*;
+use combine::primitives::{Stream, Positioner};
 use tokenizer::{self, AST};
 
 #[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
@@ -51,7 +51,7 @@ fn is_sep(t: AST) -> bool {
     t == AST::Whitespace || t == AST::Pipe
 }
 
-fn arg<I>(input: State<I>) -> primitives::ParseResult<AST, I, AST>
+fn arg<I>(input: State<I>) -> primitives::ParseResult<AST, I>
 where I: Stream<Item=AST> {
     many1(satisfy(|t| !is_sep(t)))
         .map(|arg: Vec<AST>| {
@@ -83,7 +83,7 @@ fn to_value(a: AST) -> Option<String> {
     }
 }
 
-fn command<I>(input: State<I>) -> primitives::ParseResult<Op, I, AST>
+fn command<I>(input: State<I>) -> primitives::ParseResult<Op, I>
 where I: Stream<Item=AST> {
     many1(
         parser(arg::<I>)
@@ -103,7 +103,7 @@ where I: Stream<Item=AST> {
     .parse_state(input)
 }
 
-fn assignment<I>(input: State<I>) -> primitives::ParseResult<Op, I, AST>
+fn assignment<I>(input: State<I>) -> primitives::ParseResult<Op, I>
 where I: Stream<Item=AST> {
     try(satisfy(|t| is_match!(t, AST::String(_)))
         .skip(token(AST::Eql)))
@@ -117,7 +117,7 @@ where I: Stream<Item=AST> {
     .parse_state(input)
 }
 
-fn piped<I>(input: State<I>) -> primitives::ParseResult<Op, I, AST>
+fn piped<I>(input: State<I>) -> primitives::ParseResult<Op, I>
 where I: Stream<Item=AST> {
     let cmd_chain = parser(command::<I>).map(|op| vec![op]);
     let pipe = token(AST::Pipe).map(|_t| return |mut lhs: Vec<Op>, mut rhs: Vec<Op>| {
@@ -142,10 +142,10 @@ where I: Stream<Item=AST> {
     .parse_state(input)
 }
 
-fn stmt<I>(input: State<I>) -> primitives::ParseResult<Op, I, AST>
+fn stmt<I>(input: State<I>) -> primitives::ParseResult<Op, I>
 where I: Stream<Item=AST> {
     optional(token(AST::Whitespace))
-        .with(choice([assignment::<I> as fn(State<I>) -> primitives::ParseResult<Op, I, AST>, piped::<I> as fn(State<I>) -> primitives::ParseResult<Op, I, AST>]))
+        .with(choice([assignment::<I> as fn(State<I>) -> primitives::ParseResult<Op, I>, piped::<I> as fn(State<I>) -> primitives::ParseResult<Op, I>]))
         .skip(optional(token(AST::Whitespace)))
         .skip(not_followed_by(any()))
         .parse_state(input)
