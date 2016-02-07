@@ -1,13 +1,12 @@
 use builtin::BuiltinMap;
 use lexer::Op;
-use libc::{c_char, STDOUT_FILENO, STDIN_FILENO};
+use libc::{STDOUT_FILENO, STDIN_FILENO};
 use nix::errno::Errno;
 use nix::sys::wait::{self, WaitStatus};
-use nix::unistd::{self, Fork};
-use nix::{self, Error};
+use nix::unistd::{self, Fork, execvp};
 use std::ffi::CString;
 use std::fmt::Debug;
-use std::{env, iter, process};
+use std::{iter, process};
 use util;
 
 #[derive(Debug)]
@@ -94,7 +93,6 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: Op) -> Result<i32, Stri
 
     // TODO all threads need to be spawned then the last waited for
     // the all others subsequently killed if not done
-    //
     for p in procs.iter_mut() {
 
         let builtin_entry = builtins.get_mut(&p.prog);

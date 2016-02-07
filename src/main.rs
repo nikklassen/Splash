@@ -1,12 +1,14 @@
 #![allow(unused_features)]
-#![feature(static_mutex)]
-#![feature(box_syntax)]
 
 extern crate readline;
 extern crate parser_combinators;
 extern crate getopts;
 extern crate nix;
 extern crate libc;
+
+#[cfg(test)]
+#[macro_use]
+extern crate lazy_static;
 
 #[macro_use]
 mod util;

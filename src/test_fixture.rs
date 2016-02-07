@@ -1,12 +1,15 @@
-use std::sync::{Arc, Mutex, StaticMutex, MUTEX_INIT};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
-static TEST_LOCK: StaticMutex = MUTEX_INIT;
+lazy_static! {
+    // The contents don't actually matter
+    static ref TEST_LOCK: Mutex<u8> = Mutex::new(0);
+}
 
 #[export_macro]
 macro_rules! test {
     ($name: expr, $func: ident) => {
-        (String::from($name), box Self::$func)
+        (String::from($name), Box::new(Self::$func))
     }
 }
 
