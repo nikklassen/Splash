@@ -89,12 +89,12 @@ impl Pipe {
 }
 
 pub fn run_processes(builtins: &mut BuiltinMap, command: Op) -> Result<i32, String> {
-    let mut procs = op_to_process(command);
+    let mut procs = op_to_processes(command);
     let mut result = Ok(0);
 
-    /* TODO all threads need to be spawned then the last waited for
-     * the all others subsequently killed if not done
-     */
+    // TODO all threads need to be spawned then the last waited for
+    // the all others subsequently killed if not done
+    //
     for p in procs.iter_mut() {
 
         let builtin_entry = builtins.get_mut(&p.prog);
@@ -104,19 +104,25 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: Op) -> Result<i32, Stri
                 Ok(WaitStatus::Exited(_pid, exit_code)) => {
                     if exit_code < 0 {
                         match Errno::from_i32(!exit_code as i32) {
-                            Errno::ENOENT => util::write_err(format!("splash: {}: command not found", p.prog)),
-                            Errno::EACCES => util::write_err(format!("splash: permission denied: {}", p.prog)),
-                            Errno::ENOTDIR => util::write_err(format!("splash: not a directory: {}", p.prog)),
+                            Errno::ENOENT => {
+                                util::write_err(format!("splash: {}: command not found", p.prog))
+                            }
+                            Errno::EACCES => {
+                                util::write_err(format!("splash: permission denied: {}", p.prog))
+                            }
+                            Errno::ENOTDIR => {
+                                util::write_err(format!("splash: not a directory: {}", p.prog))
+                            }
                             e => util::write_err(format!("splash: {}: {}", e.desc(), p.prog)),
                         }
                         result = Ok(127);
                     } else if exit_code != 0 {
                         result = Ok(exit_code as i32);
                     }
-                },
+                }
                 e => {
                     result = show_err(e);
-                },
+                }
             };
         } else {
 
@@ -125,7 +131,7 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: Op) -> Result<i32, Stri
 
             let cmd = builtin_entry.unwrap();
             result = cmd.run(&p.args[..])
-                .or_else(show_err);
+                        .or_else(show_err);
 
             p.stdout.close();
             p.stdin.close();
@@ -141,38 +147,37 @@ macro_rules! str_vec {
     }
 }
 
-fn op_to_process(op: Op) -> Vec<Process> {
+fn op_to_processes(op: Op) -> Vec<Process> {
     match op {
-        Op::Cmd { prog, args } => vec!(Process::new(prog, args)),
+        Op::Cmd { prog, args } => vec![Process::new(prog, args)],
         Op::Pipe { cmds } => {
-            let mut procs: Vec<_> = cmds
-                .into_iter()
-                .flat_map(op_to_process)
-                .collect();
+            let mut procs: Vec<_> = cmds.into_iter()
+                                        .flat_map(op_to_processes)
+                                        .collect();
 
             let num_procs = procs.len();
             if num_procs == 1 {
                 return procs;
             }
 
-            let mut prev_pipe_read = Pipe::from(STDIN_FILENO);
+            let mut prev_pipe_out = Pipe::from(STDIN_FILENO);
 
-            for p in &mut procs[..num_procs-1] {
-                let (pipe_read, pipe_write) = unistd::pipe().unwrap();
-                p.stdout = Pipe::new(pipe_write);
-                p.stdin = prev_pipe_read;
+            for p in &mut procs[..num_procs - 1] {
+                let (pipe_out, pipe_in) = unistd::pipe().unwrap();
+                p.stdout = Pipe::new(pipe_in);
+                p.stdin = prev_pipe_out;
 
-                prev_pipe_read = Pipe::new(pipe_read);
+                prev_pipe_out = Pipe::new(pipe_out);
             }
 
             // End the borrow of procs before we return it
             {
                 let mut last_proc = procs.last_mut().unwrap();
                 last_proc.stdout = Pipe::from(STDOUT_FILENO);
-                last_proc.stdin = prev_pipe_read;
+                last_proc.stdin = prev_pipe_out;
             }
             procs
-        },
+        }
         _ => panic!("{:?} is not executable", op),
     }
 }
@@ -188,9 +193,9 @@ fn fork_proc(process: &mut Process) {
         process.stdin.as_stdin();
 
         let args = &iter::once(process.prog.clone())
-            .chain(process.args.iter().cloned())
-            .map(|s| CString::new(s.as_bytes()).unwrap())
-            .collect::<Vec<_>>()[..];
+                        .chain(process.args.iter().cloned())
+                        .map(|s| CString::new(s.as_bytes()).unwrap())
+                        .collect::<Vec<_>>()[..];
 
         let err = execvp(&CString::new(process.prog.as_bytes()).unwrap(), args).unwrap_err();
 
@@ -202,37 +207,4 @@ fn fork_proc(process: &mut Process) {
 
 fn show_err<S, T: Debug>(e: T) -> Result<S, String> {
     Err(format!("{:?}", e))
-}
-
-// TODO: Temp until nix-rust is updated
-mod ffi {
-    use libc::{c_char, c_int};
-
-    extern {
-        pub fn execvp(filename: *const c_char, argv: *const *const c_char) -> c_int;
-
-        pub static mut environ: *const *const c_char;
-    }
-}
-
-#[inline]
-pub fn execvp(filename: &CString, args: &[CString]) -> nix::Result<()> {
-    use std::ptr;
-
-    let env_vars: Vec<_> = env::vars()
-        .map(|(k, v)|
-             CString::new([k, v].join("=").as_bytes())
-             .unwrap()
-             .as_ptr())
-        .collect();
-
-    let mut args_p: Vec<*const c_char> = args.iter().map(|s| s.as_ptr()).collect();
-    args_p.push(ptr::null());
-
-    unsafe {
-        ffi::environ = env_vars.as_ptr();
-        ffi::execvp(filename.as_ptr(), args_p.as_ptr())
-    };
-
-    Err(Error::Sys(Errno::last()))
 }

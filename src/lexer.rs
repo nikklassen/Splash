@@ -121,6 +121,7 @@ fn piped<I>(input: State<I>) -> primitives::ParseResult<Op, I, AST>
 where I: Stream<Item=AST> {
     let cmd_chain = parser(command::<I>).map(|op| vec![op]);
     let pipe = token(AST::Pipe).map(|_t| return |mut lhs: Vec<Op>, mut rhs: Vec<Op>| {
+        // Remove the first argument so we can distinguish it as the command name
         lhs.push(rhs.remove(0));
         lhs
     });
