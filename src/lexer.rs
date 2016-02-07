@@ -13,6 +13,9 @@ pub enum Op {
     EqlStmt {
         lhs: String,
         rhs: String
+    },
+    Pipe {
+        cmds: Vec<Op>
     }
 }
 
@@ -44,9 +47,13 @@ impl Positioner for Op {
     }
 }
 
+fn is_sep(t: AST) -> bool {
+    t == AST::Whitespace || t == AST::Pipe
+}
+
 fn arg<I>(input: State<I>) -> primitives::ParseResult<AST, I, AST>
 where I: Stream<Item=AST> {
-    many1(satisfy(|t| t != AST::Whitespace))
+    many1(satisfy(|t| !is_sep(t)))
         .map(|arg: Vec<AST>| {
             let value = arg
             .into_iter()
@@ -110,10 +117,35 @@ where I: Stream<Item=AST> {
     .parse_state(input)
 }
 
+fn piped<I>(input: State<I>) -> primitives::ParseResult<Op, I, AST>
+where I: Stream<Item=AST> {
+    let cmd_chain = parser(command::<I>).map(|op| vec![op]);
+    let pipe = token(AST::Pipe).map(|_t| return |mut lhs: Vec<Op>, mut rhs: Vec<Op>| {
+        // Remove the first argument so we can distinguish it as the command name
+        lhs.push(rhs.remove(0));
+        lhs
+    });
+
+    let ws = optional(token(AST::Whitespace));
+    chainl1(
+        cmd_chain.skip(ws.clone()),
+        pipe.skip(ws))
+        .map(|mut cmds| {
+            if cmds.len() == 1 {
+                return cmds.remove(0);
+            }
+
+            Op::Pipe {
+                cmds: cmds
+            }
+        })
+    .parse_state(input)
+}
+
 fn stmt<I>(input: State<I>) -> primitives::ParseResult<Op, I, AST>
 where I: Stream<Item=AST> {
     optional(token(AST::Whitespace))
-        .with(choice([assignment::<I> as fn(State<I>) -> primitives::ParseResult<Op, I, AST>, command::<I> as fn(State<I>) -> primitives::ParseResult<Op, I, AST>]))
+        .with(choice([assignment::<I> as fn(State<I>) -> primitives::ParseResult<Op, I, AST>, piped::<I> as fn(State<I>) -> primitives::ParseResult<Op, I, AST>]))
         .skip(optional(token(AST::Whitespace)))
         .skip(not_followed_by(any()))
         .parse_state(input)
@@ -199,5 +231,18 @@ mod tests {
         let user_env = UserEnv::new();
         let cmd = parse("FOO=bar baz", &user_env);
         assert!(cmd.is_err());
+    }
+
+    #[test]
+    fn parse_pipe() {
+        let user_env = UserEnv::new();
+        let cmd = parse("cmd1 | cmd2 arg", &user_env).unwrap().unwrap();
+        assert_eq!(cmd, Op::Pipe {
+            cmds: vec![Op::Cmd { prog: "cmd1".to_string(), args: Vec::new() },
+            Op::Cmd {
+                prog: "cmd2".to_string(),
+                args: vec!["arg".to_string()]
+            }]
+        });
     }
 }
