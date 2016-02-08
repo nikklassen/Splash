@@ -4,11 +4,11 @@ use std::env;
 fn run_command(cmd: &str) -> (i32, String) {
     let build_dir = env::var("SPLASH_BUILD_DIR").unwrap_or(String::from("target/debug"));
     let output = Command::new("sh")
-        .arg("-c")
-        .arg(format!("echo \"{}\" | splash", cmd))
-        .env("PATH", format!("/bin:/usr/bin:{}", build_dir))
-        .output()
-        .unwrap_or_else(|e| { panic!("failed to execute process: {}", e) });
+                     .arg("-c")
+                     .arg(format!("echo \"{}\" | splash", cmd))
+                     .env("PATH", format!("/bin:/usr/bin:{}", build_dir))
+                     .output()
+                     .unwrap_or_else(|e| panic!("failed to execute process: {}", e));
 
     let stdout = String::from_utf8(output.stdout).unwrap();
     (output.status.code().unwrap(), stdout)
@@ -47,6 +47,13 @@ fn pipe_from_ext_to_ext() {
     let (ecode, output) = run_command("expr 1 + 1 | sed 's/.*/& &/'");
     assert_eq!(ecode, 0);
     assert_eq!(output, String::from("2 2\n"));
+}
+
+#[test]
+fn pipe_from_ext_to_builtin() {
+    let (ecode, output) = run_command("expr 1 + 1 | echo 'hello world'");
+    assert_eq!(ecode, 0);
+    assert_eq!(output, String::from("hello world\n"));
 }
 
 #[test]

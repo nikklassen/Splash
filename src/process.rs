@@ -1,12 +1,14 @@
-use builtin::BuiltinMap;
+use builtin::{BuiltinMap, Builtin};
 use lexer::Op;
 use libc::{STDOUT_FILENO, STDIN_FILENO};
 use nix::errno::Errno;
+use std::io::{self, Write};
 use nix::sys::wait::{self, WaitStatus};
 use nix::unistd::{self, Fork, execvp};
 use std::ffi::CString;
 use std::fmt::Debug;
 use std::{iter, process};
+use std::process::exit;
 use util;
 
 #[derive(Debug)]
@@ -38,10 +40,9 @@ pub struct Pipe {
 
 impl Drop for Pipe {
     fn drop(&mut self) {
-        if self.fd < 3 {
-            return;
+        if self.fd >= 3 {
+            self.close();
         }
-        self.close();
     }
 }
 
@@ -98,45 +99,40 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: Op) -> Result<i32, Stri
         let builtin_entry = builtins.get_mut(&p.prog);
         if builtin_entry.is_none() {
             fork_proc(p);
-            match wait::waitpid(p.pid, None) {
-                Ok(WaitStatus::Exited(_pid, exit_code)) => {
-                    if exit_code < 0 {
-                        match Errno::from_i32(!exit_code as i32) {
-                            Errno::ENOENT => {
-                                util::write_err(format!("splash: {}: command not found", p.prog))
-                            }
-                            Errno::EACCES => {
-                                util::write_err(format!("splash: permission denied: {}", p.prog))
-                            }
-                            Errno::ENOTDIR => {
-                                util::write_err(format!("splash: not a directory: {}", p.prog))
-                            }
-                            e => util::write_err(format!("splash: {}: {}", e.desc(), p.prog)),
-                        }
-                        result = Ok(127);
-                    } else if exit_code != 0 {
-                        result = Ok(exit_code as i32);
-                    }
-                }
-                e => {
-                    result = show_err(e);
-                }
-            };
+            result = wait_for_pid(&p);
         } else {
-
-            p.stdout.as_stdout();
-            p.stdin.as_stdin();
-
             let cmd = builtin_entry.unwrap();
-            result = cmd.run(&p.args[..])
-                        .or_else(show_err);
-
-            p.stdout.close();
-            p.stdin.close();
+            fork_builtin(p, cmd);
+            result = wait_for_pid(&p);
         }
     }
 
     result
+}
+
+fn wait_for_pid(p: &Process) -> Result<i32, String> {
+    match wait::waitpid(p.pid, None) {
+        Ok(WaitStatus::Exited(_pid, exit_code)) => {
+            if exit_code < 0 {
+                match Errno::from_i32(!exit_code as i32) {
+                    Errno::ENOENT => {
+                        util::write_err(format!("splash: {}: command not found", p.prog))
+                    }
+                    Errno::EACCES => {
+                        util::write_err(format!("splash: permission denied: {}", p.prog))
+                    }
+                    Errno::ENOTDIR => {
+                        util::write_err(format!("splash: not a directory: {}", p.prog))
+                    }
+                    e => util::write_err(format!("splash: {}: {}", e.desc(), p.prog)),
+                }
+                Ok(127)
+            } else {
+                Ok(exit_code as i32)
+            }
+        }
+        e => show_err(e),
+    }
 }
 
 macro_rules! str_vec {
@@ -147,17 +143,23 @@ macro_rules! str_vec {
 
 fn op_to_processes(op: Op) -> Vec<Process> {
     match op {
-        Op::Cmd { prog, args } => vec![Process::new(prog, args)],
+        Op::Cmd { prog, args } => {
+            let mut p = Process::new(prog, args);
+            p.stdout = Pipe::from(STDOUT_FILENO);
+            p.stdin = Pipe::from(STDIN_FILENO);
+            vec![p]
+        }
         Op::Pipe { cmds } => {
             let mut procs: Vec<_> = cmds.into_iter()
-                                        .flat_map(op_to_processes)
+                                        .map(|cmd| {
+                                            match cmd {
+                                                Op::Cmd { prog, args } => Process::new(prog, args),
+                                                _ => unreachable!(),
+                                            }
+                                        })
                                         .collect();
 
             let num_procs = procs.len();
-            if num_procs == 1 {
-                return procs;
-            }
-
             let mut prev_pipe_out = Pipe::from(STDIN_FILENO);
 
             for p in &mut procs[..num_procs - 1] {
@@ -177,6 +179,29 @@ fn op_to_processes(op: Op) -> Vec<Process> {
             procs
         }
         _ => panic!("{:?} is not executable", op),
+    }
+}
+
+fn fork_builtin(process: &mut Process, cmd: &mut Box<Builtin>) {
+    let f = unistd::fork().unwrap();
+    if let Fork::Parent(pid) = f {
+        process.pid = pid;
+        process.stdout.close();
+        process.stdin.close();
+    } else {
+        process.stdout.as_stdout();
+        process.stdin.as_stdin();
+
+        let result = cmd.run(&process.args[..]);
+        let exit_code = match result {
+            Ok(ecode) => ecode,
+            Err(e) => {
+                let stderr = io::stderr();
+                writeln!(stderr.lock(), "{:?}", e).unwrap();
+                127
+            }
+        };
+        exit(exit_code);
     }
 }
 
