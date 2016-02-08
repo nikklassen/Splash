@@ -1,11 +1,13 @@
 use builtin::{self, BuiltinMap};
 use env::UserEnv;
 use lexer::{self, Op};
+use libc::STDIN_FILENO;
 use process;
 use readline::{readline_bare, add_history, Error, ReadlineBytes};
 use std::env;
 use std::ffi::CString;
 use std::io::{self, Write};
+use nix::unistd::isatty;
 use std::process::exit;
 
 static WAVE_EMOJI: &'static str = "\u{1F30A}";
@@ -16,17 +18,11 @@ pub fn input_loop() {
 
     let mut last_status = 0;
     loop {
-        let input = readline();
-        let line = match input {
-            Ok(ref l) => {
-                add_history(l);
-                l.to_string_lossy().into_owned()
-            },
-            // ^D
-            Err(_) => break,
-        };
-
-        let parsed = lexer::parse(&line, &user_env);
+        let line = getline();
+        if line.is_none() {
+            break;
+        }
+        let parsed = lexer::parse(&line.unwrap(), &user_env);
 
         let stderr = io::stderr();
         if let Err(e) = parsed {
@@ -50,6 +46,39 @@ pub fn input_loop() {
     }
 
     exit(last_status);
+}
+
+fn getline() -> Option<String> {
+    let res = isatty(STDIN_FILENO);
+    // If stdin is closed
+    if res.is_err() {
+        return None;
+    }
+    if res.unwrap() {
+        let input = readline();
+        match input {
+            Ok(ref l) => {
+                add_history(l);
+                Some(l.to_string_lossy().into_owned())
+            },
+            // ^D
+            Err(_) => {
+                None
+            }
+        }
+    } else {
+        let mut buf = String::new();
+        match io::stdin().read_line(&mut buf) {
+            // An error or ^D
+            Err(_) | Ok(0) => {
+                return None;
+            }
+            _ => {}
+        }
+        // Remove trailing newline
+        buf.pop();
+        Some(buf)
+    }
 }
 
 fn readline() -> Result<ReadlineBytes, Error> {
