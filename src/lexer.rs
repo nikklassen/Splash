@@ -2,21 +2,29 @@ use env::UserEnv;
 use interpolate;
 use combine::*;
 use combine::primitives::{Stream, Positioner};
+use combine::combinator::{Optional, Token};
 use tokenizer::{self, AST};
+
+#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
+pub enum Redir {
+    In(String),
+    Out(String),
+}
 
 #[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
 pub enum Op {
     Cmd {
         prog: String,
         args: Vec<String>,
+        io: Option<Redir>,
     },
     EqlStmt {
         lhs: String,
-        rhs: String
+        rhs: String,
     },
     Pipe {
-        cmds: Vec<Op>
-    }
+        cmds: Vec<Op>,
+    },
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -47,13 +55,13 @@ impl Positioner for Op {
     }
 }
 
-fn is_sep(t: AST) -> bool {
-    t == AST::Whitespace || t == AST::Pipe
+fn is_sep(t: &AST) -> bool {
+    [AST::Whitespace, AST::Pipe, AST::GT, AST::LT].contains(t)
 }
 
 fn arg<I>(input: State<I>) -> primitives::ParseResult<AST, I>
 where I: Stream<Item=AST> {
-    many1(satisfy(|t| !is_sep(t)))
+    many1(satisfy(|t| !is_sep(&t)))
         .map(|arg: Vec<AST>| {
             let value = arg
             .into_iter()
@@ -65,7 +73,7 @@ where I: Stream<Item=AST> {
             });
             AST::String(value)
         })
-    .parse_state(input)
+        .parse_state(input)
 }
 
 fn to_value(a: AST) -> Option<String> {
@@ -85,22 +93,33 @@ fn to_value(a: AST) -> Option<String> {
 
 fn command<I>(input: State<I>) -> primitives::ParseResult<Op, I>
 where I: Stream<Item=AST> {
-    many1(
-        parser(arg::<I>)
-        .skip(optional(token(AST::Whitespace)))
-        )
-        .map(|args: Vec<AST>| {
+    many1(parser(arg::<I>).skip(ws()))
+        .and(optional(
+            choice([token(AST::GT), token(AST::LT)])
+            .skip(ws())
+            .and(parser(arg::<I>))))
+        .map(|(args, redir): (Vec<AST>, Option<(AST, AST)>)| {
+            let io = redir.map(|(dir, io_target)| {
+                let val = to_value(io_target).unwrap();
+                if dir == AST::GT {
+                    Redir::Out(val)
+                } else {
+                    Redir::In(val)
+                }
+            });
+
             let mut string_args: Vec<String> = args
-            .into_iter()
-            .map(|a| to_value(a).unwrap_or(String::new()))
-            .collect();
+                .into_iter()
+                .map(|a| to_value(a).unwrap_or(String::new()))
+                .collect();
             let prog = string_args.remove(0);
             Op::Cmd {
                 prog: prog,
                 args: string_args,
+                io: io,
             }
         })
-    .parse_state(input)
+        .parse_state(input)
 }
 
 fn assignment<I>(input: State<I>) -> primitives::ParseResult<Op, I>
@@ -117,6 +136,10 @@ where I: Stream<Item=AST> {
     .parse_state(input)
 }
 
+fn ws<I>() -> Optional<Token<I>> where I: Stream<Item=AST> {
+    optional(token(AST::Whitespace))
+}
+
 fn piped<I>(input: State<I>) -> primitives::ParseResult<Op, I>
 where I: Stream<Item=AST> {
     let cmd_chain = parser(command::<I>).map(|op| vec![op]);
@@ -126,10 +149,9 @@ where I: Stream<Item=AST> {
         lhs
     });
 
-    let ws = optional(token(AST::Whitespace));
     chainl1(
-        cmd_chain.skip(ws.clone()),
-        pipe.skip(ws))
+        cmd_chain.skip(ws()),
+        pipe.skip(ws()))
         .map(|mut cmds| {
             if cmds.len() == 1 {
                 return cmds.remove(0);
@@ -144,9 +166,9 @@ where I: Stream<Item=AST> {
 
 fn stmt<I>(input: State<I>) -> primitives::ParseResult<Op, I>
 where I: Stream<Item=AST> {
-    optional(token(AST::Whitespace))
-        .with(choice([assignment::<I> as fn(State<I>) -> primitives::ParseResult<Op, I>, piped::<I> as fn(State<I>) -> primitives::ParseResult<Op, I>]))
-        .skip(optional(token(AST::Whitespace)))
+    ws().with(choice(
+            vec![assignment::<I> as fn(State<I>) -> primitives::ParseResult<Op, I>, piped::<I>]))
+        .skip(ws())
         .skip(not_followed_by(any()))
         .parse_state(input)
 }
@@ -183,6 +205,7 @@ mod tests {
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: Vec::new(),
+            io: None,
         });
     }
 
@@ -193,6 +216,7 @@ mod tests {
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: vec!["arg1".to_string(), "arg2".to_string()],
+            io: None,
         });
     }
 
@@ -203,6 +227,7 @@ mod tests {
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: vec!["arg1  arg2".to_string()],
+            io: None,
         });
     }
 
@@ -213,6 +238,7 @@ mod tests {
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: vec!["arg1arg2 arg3arg4 arg5".to_string()],
+            io: None,
         });
     }
 
@@ -222,7 +248,7 @@ mod tests {
         let cmd = parse("FOO=bar", &user_env).unwrap().unwrap();
         assert_eq!(cmd, Op::EqlStmt {
             lhs: "FOO".to_string(),
-            rhs: "bar".to_string()
+            rhs: "bar".to_string(),
         });
     }
 
@@ -238,11 +264,39 @@ mod tests {
         let user_env = UserEnv::new();
         let cmd = parse("cmd1 | cmd2 arg", &user_env).unwrap().unwrap();
         assert_eq!(cmd, Op::Pipe {
-            cmds: vec![Op::Cmd { prog: "cmd1".to_string(), args: Vec::new() },
-            Op::Cmd {
-                prog: "cmd2".to_string(),
-                args: vec!["arg".to_string()]
-            }]
+            cmds: vec![
+                Op::Cmd {
+                    prog: "cmd1".to_string(),
+                    args: Vec::new(),
+                    io: None,
+                },
+                Op::Cmd {
+                    prog: "cmd2".to_string(),
+                    args: vec!["arg".to_string()],
+                    io: None,
+                }],
         });
+    }
+
+    #[test]
+    fn parse_redir_out() {
+        let user_env = UserEnv::new();
+        let cmd = parse("cmd1 > file.txt", &user_env).unwrap().unwrap();
+        assert_eq!(cmd, Op::Cmd {
+            prog: "cmd1".to_string(),
+            args: Vec::new(),
+            io: Some(Redir::Out("file.txt".to_string())),
+        })
+    }
+
+    #[test]
+    fn parse_redir_in() {
+        let user_env = UserEnv::new();
+        let cmd = parse("cmd1 < file.txt", &user_env).unwrap().unwrap();
+        assert_eq!(cmd, Op::Cmd {
+            prog: "cmd1".to_string(),
+            args: Vec::new(),
+            io: Some(Redir::In("file.txt".to_string())),
+        })
     }
 }

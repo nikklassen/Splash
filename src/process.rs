@@ -1,14 +1,16 @@
 use builtin::{BuiltinMap, Builtin};
-use lexer::Op;
+use file::{self, Pipe, Fd};
+use lexer::{Op, Redir};
 use libc::{STDOUT_FILENO, STDIN_FILENO};
 use nix::errno::Errno;
-use std::io::{self, Write};
 use nix::sys::wait::{self, WaitStatus};
 use nix::unistd::{self, Fork, execvp};
 use std::ffi::CString;
 use std::fmt::Debug;
+use std::fs::File;
+use std::io::{self, Write};
+use std::ops::IndexMut;
 use std::{iter, process};
-use std::process::exit;
 use util;
 
 #[derive(Debug)]
@@ -16,8 +18,8 @@ pub struct Process {
     pub pid: i32,
     pub prog: String,
     pub args: Vec<String>,
-    pub stdin: Pipe,
-    pub stdout: Pipe,
+    pub stdin: Fd,
+    pub stdout: Fd,
 }
 
 impl Process {
@@ -26,65 +28,9 @@ impl Process {
             pid: 0,
             prog: prog,
             args: args,
-            stdin: Pipe::new(STDIN_FILENO),
-            stdout: Pipe::new(STDOUT_FILENO),
+            stdin: Fd::new_pipe(STDIN_FILENO),
+            stdout: Fd::new_pipe(STDOUT_FILENO),
         }
-    }
-}
-
-#[derive(Debug)]
-pub struct Pipe {
-    fd: i32,
-    is_closed: bool,
-}
-
-impl Drop for Pipe {
-    fn drop(&mut self) {
-        if self.fd >= 3 {
-            self.close();
-        }
-    }
-}
-
-impl From<i32> for Pipe {
-    fn from(fd: i32) -> Pipe {
-        Pipe::new(unistd::dup(fd).unwrap())
-    }
-}
-
-impl Pipe {
-    fn new(fd: i32) -> Pipe {
-        Pipe {
-            fd: fd,
-            is_closed: false,
-        }
-    }
-
-    fn as_stdout(&mut self) {
-        self.switch_fd(STDOUT_FILENO);
-    }
-
-    fn as_stdin(&mut self) {
-        self.switch_fd(STDIN_FILENO);
-    }
-
-    fn close(&mut self) {
-        if self.is_closed {
-            return;
-        }
-
-        unistd::close(self.fd).unwrap();
-        self.is_closed = true;
-    }
-
-    fn switch_fd(&mut self, new_fd: i32) {
-        if self.fd == new_fd {
-            return;
-        }
-
-        unistd::dup2(self.fd, new_fd).unwrap();
-        unistd::close(self.fd).unwrap();
-        self.fd = new_fd;
     }
 }
 
@@ -143,38 +89,93 @@ macro_rules! str_vec {
 
 fn op_to_processes(op: Op) -> Vec<Process> {
     match op {
-        Op::Cmd { prog, args } => {
+        Op::Cmd { prog, args, io } => {
             let mut p = Process::new(prog, args);
-            p.stdout = Pipe::from(STDOUT_FILENO);
-            p.stdin = Pipe::from(STDIN_FILENO);
+            match io {
+                // TODO error handling for files
+                Some(Redir::Out(fname)) => {
+                    // Actually copy the std file descriptors instead of just wrapping them
+                    p.stdin = Fd::from(STDIN_FILENO);
+                    p.stdout = Fd::from(File::create(fname).unwrap());
+                }
+                Some(Redir::In(fname)) => {
+                    p.stdout = Fd::from(STDOUT_FILENO);
+                    p.stdin = Fd::from(File::open(fname).unwrap());
+                }
+                None => {
+                    p.stdout = Fd::from(STDOUT_FILENO);
+                    p.stdin = Fd::from(STDIN_FILENO);
+                }
+            }
             vec![p]
         }
         Op::Pipe { cmds } => {
-            let mut procs: Vec<_> = cmds.into_iter()
-                                        .map(|cmd| {
-                                            match cmd {
-                                                Op::Cmd { prog, args } => Process::new(prog, args),
-                                                _ => unreachable!(),
-                                            }
-                                        })
-                                        .collect();
+            let mut procs: Vec<_> = cmds
+                .into_iter()
+                .map(|cmd| {
+                    match cmd {
+                        Op::Cmd { prog, args, io } => {
+                            let mut p = Process::new(prog, args);
+                            match io {
+                                Some(Redir::Out(fname)) => {
+                                    p.stdout = Fd::from(File::create(fname).unwrap())
+                                }
+                                Some(Redir::In(fname)) => {
+                                    p.stdin = Fd::from(File::open(fname).unwrap())
+                                }
+                                None => {}
+                            }
+                            p
+                        }
+                        _ => unreachable!(),
+                    }
+                })
+                .collect();
 
             let num_procs = procs.len();
-            let mut prev_pipe_out = Pipe::from(STDIN_FILENO);
+            let mut prev_pipe_out = Fd::from(STDIN_FILENO);
 
-            for p in &mut procs[..num_procs - 1] {
+            for i in 0..(num_procs - 1) {
+                let ref mut p = procs.index_mut(i);
                 let (pipe_out, pipe_in) = unistd::pipe().unwrap();
-                p.stdout = Pipe::new(pipe_in);
-                p.stdin = prev_pipe_out;
+                // Replace the fake default stdin/stdout with the pipeline chain
+                if let Fd::Pipe(_) = p.stdout {
+                    p.stdout = Fd::new_pipe(pipe_in);
+                } else {
+                    // Close the output since this process will be writing to a file
+                    unistd::close(pipe_in).unwrap();
+                }
+                if let Fd::Pipe(_) = p.stdin {
+                    p.stdin = prev_pipe_out;
+                } else if i != 0 {
+                    // Ignore the previous output since this process is reading from a file,
+                    // prev_pipe_out will be dropped and closed as necessary
+                    let mut stderr = io::stderr();
+                    writeln!(
+                        stderr,
+                        "splash: Ignoring piped input for {}; programs may not behave as expected.",
+                        p.prog).unwrap();
+                }
 
-                prev_pipe_out = Pipe::new(pipe_out);
+                prev_pipe_out = Fd::new_pipe(pipe_out);
             }
 
             // End the borrow of procs before we return it
             {
                 let mut last_proc = procs.last_mut().unwrap();
-                last_proc.stdout = Pipe::from(STDOUT_FILENO);
-                last_proc.stdin = prev_pipe_out;
+                if let Fd::Pipe(_) = last_proc.stdout {
+                    last_proc.stdout = Fd::from(STDOUT_FILENO);
+                }
+                // Like above, if prev_pipe_out is not used here it will be dropped and cleaned up
+                if let Fd::Pipe(_) = last_proc.stdin {
+                    last_proc.stdin = prev_pipe_out;
+                } else if num_procs > 1 {
+                    let mut stderr = io::stderr();
+                    writeln!(
+                        stderr,
+                        "splash: Ignoring piped input for {}; programs may not behave as expected.",
+                        last_proc.prog).unwrap();
+                }
             }
             procs
         }
@@ -189,8 +190,8 @@ fn fork_builtin(process: &mut Process, cmd: &mut Box<Builtin>) {
         process.stdout.close();
         process.stdin.close();
     } else {
-        process.stdout.as_stdout();
-        process.stdin.as_stdin();
+        file::as_stdout(&mut process.stdout);
+        file::as_stdin(&mut process.stdin);
 
         let result = cmd.run(&process.args[..]);
         let exit_code = match result {
@@ -201,7 +202,7 @@ fn fork_builtin(process: &mut Process, cmd: &mut Box<Builtin>) {
                 127
             }
         };
-        exit(exit_code);
+        process::exit(exit_code);
     }
 }
 
@@ -212,13 +213,13 @@ fn fork_proc(process: &mut Process) {
         process.stdout.close();
         process.stdin.close();
     } else {
-        process.stdout.as_stdout();
-        process.stdin.as_stdin();
+        file::as_stdout(&mut process.stdout);
+        file::as_stdin(&mut process.stdin);
 
         let args = &iter::once(process.prog.clone())
-                        .chain(process.args.iter().cloned())
-                        .map(|s| CString::new(s.as_bytes()).unwrap())
-                        .collect::<Vec<_>>()[..];
+            .chain(process.args.iter().cloned())
+            .map(|s| CString::new(s.as_bytes()).unwrap())
+            .collect::<Vec<_>>()[..];
 
         let err = execvp(&CString::new(process.prog.as_bytes()).unwrap(), args).unwrap_err();
 

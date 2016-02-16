@@ -8,6 +8,8 @@ pub enum AST {
     Var(String),
     Eql,
     Pipe,
+    LT,
+    GT
 }
 
 impl Display for AST {
@@ -93,6 +95,14 @@ fn eql_tok(reader: &mut CharReader) -> ASTResult {
 
 fn pipe_tok(reader: &mut CharReader) -> ASTResult {
     char_tok(reader, '|', AST::Pipe)
+}
+
+fn redir_in_tok(reader: &mut CharReader) -> ASTResult {
+    char_tok(reader, '<', AST::LT)
+}
+
+fn redir_out_tok(reader: &mut CharReader) -> ASTResult {
+    char_tok(reader, '>', AST::GT)
 }
 
 fn escaped_tok(reader: &mut CharReader) -> ASTResult {
@@ -222,7 +232,9 @@ pub fn tokenize(s: &str) -> Result<Vec<AST>, String> {
         quotemark_tok,
         var_tok,
         eql_tok,
-        pipe_tok);
+        pipe_tok,
+        redir_in_tok,
+        redir_out_tok);
 
     tokenize_loop(&mut reader, tokenizers, |reader| reader.current)
 }
