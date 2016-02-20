@@ -18,13 +18,6 @@ fn run_command(cmd: &str) -> (i32, String) {
 }
 
 #[test]
-fn foo() {
-    let (ecode, output) = run_command("pwd");
-    println!("ecode: {}", ecode);
-    println!("output: {}", output);
-}
-
-#[test]
 fn run_builtin() {
     let (ecode, output) = run_command("echo hello");
     assert_eq!(ecode, 0);

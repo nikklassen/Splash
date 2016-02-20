@@ -5,7 +5,7 @@ use std::fs::File;
 
 #[derive(Debug)]
 pub enum Fd {
-    Pipe(Pipe),
+    Raw(Raw),
     File(File),
 }
 
@@ -30,14 +30,14 @@ pub fn as_stdout(fd: &mut Fd) {
 }
 
 #[derive(Debug)]
-pub struct Pipe {
+pub struct Raw {
     fd: i32,
     is_closed: bool,
 }
 
-impl Pipe {
-    pub fn new(fd: i32) -> Pipe {
-        Pipe {
+impl Raw {
+    pub fn new(fd: i32) -> Raw {
+        Raw {
             fd: fd,
             is_closed: false,
         }
@@ -53,7 +53,7 @@ impl Pipe {
     }
 }
 
-impl Drop for Pipe {
+impl Drop for Raw {
     fn drop(&mut self) {
         if self.fd > 2 && !self.is_closed {
             self.close();
@@ -61,29 +61,27 @@ impl Drop for Pipe {
     }
 }
 
-impl From<i32> for Pipe {
-    /// Actually duplicates the file descriptor
-    fn from(fd: i32) -> Pipe {
-        Pipe::new(unistd::dup(fd).unwrap())
-    }
-}
-
 impl Fd {
-    /// Wraps an existing `fd` in a pipe object
-    pub fn new_pipe(fd: i32) -> Fd {
-        Fd::Pipe(Pipe::new(fd))
+    /// Wraps an existing `fd` in a raw file descriptor object
+    pub fn new(fd: i32) -> Fd {
+        Fd::Raw(Raw::new(fd))
+    }
+
+    /// Duplicates the file descriptor
+    pub fn dup(fd: i32) -> Fd {
+        Fd::Raw(Raw::new(unistd::dup(fd).unwrap()))
     }
 
     pub fn get_fd(&self) -> RawFd {
         match self {
-            &Fd::Pipe(ref p) => p.fd,
+            &Fd::Raw(ref p) => p.fd,
             &Fd::File(ref f) => f.as_raw_fd(),
         }
     }
 
     pub fn close(&mut self) {
         match self {
-            &mut Fd::Pipe(ref mut p) => p.close(),
+            &mut Fd::Raw(ref mut p) => p.close(),
             // no-op since files automatically closed
             &mut Fd::File(..) => {},
         }
@@ -93,11 +91,5 @@ impl Fd {
 impl From<File> for Fd {
     fn from(f: File) -> Fd {
         Fd::File(f)
-    }
-}
-
-impl From<i32> for Fd {
-    fn from(fd: i32) -> Fd {
-        Fd::Pipe(Pipe::from(fd))
     }
 }
