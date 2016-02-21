@@ -8,8 +8,8 @@ pub enum AST {
     Var(String),
     Eql,
     Pipe,
-    LT,
-    GT
+    LT(Option<i32>),
+    GT(Option<i32>),
 }
 
 impl Display for AST {
@@ -98,11 +98,11 @@ fn pipe_tok(reader: &mut CharReader) -> ASTResult {
 }
 
 fn redir_in_tok(reader: &mut CharReader) -> ASTResult {
-    char_tok(reader, '<', AST::LT)
+    char_tok(reader, '<', AST::LT(None))
 }
 
 fn redir_out_tok(reader: &mut CharReader) -> ASTResult {
-    char_tok(reader, '>', AST::GT)
+    char_tok(reader, '>', AST::GT(None))
 }
 
 fn escaped_tok(reader: &mut CharReader) -> ASTResult {
@@ -188,6 +188,40 @@ fn var_tok(reader: &mut CharReader) -> ASTResult {
     }
 }
 
+fn num_tok(reader: &mut CharReader) -> ASTResult {
+    if !is_match!(reader.current, Some(_)) {
+        return Ok(None);
+    }
+    let c = reader.current.unwrap();
+    if !c.is_digit(10) {
+        return Ok(None);
+    }
+
+    let mut num = String::new();
+    num.push(c);
+    loop {
+        reader.advance();
+        match reader.current {
+            Some(c) if c.is_digit(10) => {
+                num.push(c);
+            },
+            Some('<') => {
+                reader.advance();
+                let n = num.parse::<i32>().unwrap();
+                return Ok(Some(AST::LT(Some(n))));
+            },
+            Some('>') => {
+                reader.advance();
+                let n = num.parse::<i32>().unwrap();
+                return Ok(Some(AST::GT(Some(n))));
+            },
+            _ => {
+                return Ok(Some(AST::String(num)));
+            },
+        }
+    }
+}
+
 fn tokenize_loop<F: Fn(&mut CharReader) -> Option<char>>(
     reader: &mut CharReader,
     tokenizers: Vec<fn(&mut CharReader) -> ASTResult>,
@@ -230,11 +264,13 @@ pub fn tokenize(s: &str) -> Result<Vec<AST>, String> {
         escaped_tok,
         lit_string_tok,
         quotemark_tok,
+        redir_in_tok,
+        redir_out_tok,
+        num_tok,
         var_tok,
         eql_tok,
         pipe_tok,
-        redir_in_tok,
-        redir_out_tok);
+    );
 
     tokenize_loop(&mut reader, tokenizers, |reader| reader.current)
 }
@@ -327,5 +363,23 @@ mod tests {
     fn parse_escaped_string() {
         let t = tokenize(r#"\"hello"#).unwrap();
         assert_eq!(t, vec![to_string("\""), to_string("hello")]);
+    }
+
+    #[test]
+    fn parse_number() {
+        let t = tokenize("123").unwrap();
+        assert_eq!(t, vec![to_string("123")]);
+    }
+
+    #[test]
+    fn parse_redirect() {
+        let t = tokenize(">").unwrap();
+        assert_eq!(t, vec![AST::GT(None)]);
+    }
+
+    #[test]
+    fn parse_io_redirect() {
+        let t = tokenize("3<").unwrap();
+        assert_eq!(t, vec![AST::LT(Some(3))]);
     }
 }

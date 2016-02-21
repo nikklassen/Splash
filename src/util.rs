@@ -7,6 +7,20 @@ macro_rules! is_match {
     ))
 }
 
+// from http://stackoverflow.com/a/27582993
+#[export_macro]
+macro_rules! hash_map(
+    { $($key:expr => $value:expr,)+ } => {
+        {
+            let mut m = ::std::collections::HashMap::new();
+            $(
+                m.insert($key, $value);
+            )+
+            m
+        }
+     };
+);
+
 #[inline]
 pub fn write_err(s: String) {
     let stderr = io::stderr();

@@ -1,4 +1,3 @@
-use libc::{STDOUT_FILENO, STDIN_FILENO};
 use nix::unistd;
 use std::os::unix::io::{RawFd, AsRawFd};
 use std::fs::File;
@@ -7,26 +6,6 @@ use std::fs::File;
 pub enum Fd {
     Raw(Raw),
     File(File),
-}
-
-/// Reopen `fd` as stdin
-pub fn as_stdin(fd: &mut Fd) {
-    if fd.get_fd() == STDIN_FILENO {
-        return;
-    }
-
-    unistd::dup2(fd.get_fd(), STDIN_FILENO).unwrap();
-    fd.close();
-}
-
-/// Reopen `fd` as stdout
-pub fn as_stdout(fd: &mut Fd) {
-    if fd.get_fd() == STDOUT_FILENO {
-        return;
-    }
-
-    unistd::dup2(fd.get_fd(), STDOUT_FILENO).unwrap();
-    fd.close();
 }
 
 #[derive(Debug)]

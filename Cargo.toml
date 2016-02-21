@@ -8,6 +8,9 @@ version = "0.0.1"
 [profile.dev]
 debug = true
 
+[profile.test]
+debug = true
+
 [dependencies]
 combine = "^1.2"
 getopts = "^0.2"
@@ -15,3 +18,6 @@ lazy_static = "^0.1.15"
 libc = "*"
 nix = "^0.4.2"
 readline = "^0.0.11"
+
+[dev-dependencies]
+tempfile = "2.1.1"

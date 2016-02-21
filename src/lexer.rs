@@ -1,22 +1,24 @@
+use combine::*;
+use combine::combinator::{Optional, Token};
+use combine::primitives::{Stream, Positioner};
 use env::UserEnv;
 use interpolate;
-use combine::*;
-use combine::primitives::{Stream, Positioner};
-use combine::combinator::{Optional, Token};
+use libc::{STDOUT_FILENO, STDIN_FILENO};
+use std::collections::HashMap;
 use tokenizer::{self, AST};
 
-#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
-pub enum Redir {
-    In(String),
-    Out(String),
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileMode {
+    Read,
+    Write,
 }
 
-#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
     Cmd {
         prog: String,
         args: Vec<String>,
-        io: Option<Redir>,
+        io: HashMap<i32, (FileMode, String)>,
     },
     EqlStmt {
         lhs: String,
@@ -55,14 +57,12 @@ impl Positioner for Op {
     }
 }
 
-fn is_sep(t: &AST) -> bool {
-    [AST::Whitespace, AST::Pipe, AST::GT, AST::LT].contains(t)
-}
-
-fn arg<I>(input: State<I>) -> primitives::ParseResult<AST, I>
+fn word<I>(input: State<I>) -> primitives::ParseResult<AST, I>
 where I: Stream<Item=AST> {
-    many1(satisfy(|t| !is_sep(&t)))
-        .map(|arg: Vec<AST>| {
+    many1(satisfy(|t| match t {
+        AST::String(_) | AST::Quoted(_) | AST::Var(_) => true,
+        _ => false,
+    })).map(|arg: Vec<AST>| {
             let value = arg
             .into_iter()
             .fold(String::new(), |mut acc, a| {
@@ -91,28 +91,40 @@ fn to_value(a: AST) -> Option<String> {
     }
 }
 
+fn io_redirect<I>(input: State<I>) -> primitives::ParseResult<(i32, FileMode, String), I>
+where I: Stream<Item=AST> {
+    satisfy(|t| is_match!(t, AST::GT(_)) || is_match!(t, AST::LT(_)))
+         .skip(ws())
+         .and(parser(word::<I>))
+    .map(|(dir, io_file_ast): (AST, AST)| {
+        let io_file = to_value(io_file_ast).unwrap();
+        let mut io_mode = FileMode::Read;
+        let mut io_number = 0;
+        if let AST::GT(io_number_opt) = dir {
+            io_mode = FileMode::Write;
+            io_number = io_number_opt.unwrap_or(STDOUT_FILENO);
+        }
+        if let AST::LT(io_number_opt) = dir {
+            io_number = io_number_opt.unwrap_or(STDIN_FILENO);
+        }
+        (io_number, io_mode, io_file)
+    })
+    .parse_state(input)
+}
+
 fn command<I>(input: State<I>) -> primitives::ParseResult<Op, I>
 where I: Stream<Item=AST> {
-    many1(parser(arg::<I>).skip(ws()))
-        .and(optional(
-            choice([token(AST::GT), token(AST::LT)])
-            .skip(ws())
-            .and(parser(arg::<I>))))
-        .map(|(args, redir): (Vec<AST>, Option<(AST, AST)>)| {
-            let io = redir.map(|(dir, io_target)| {
-                let val = to_value(io_target).unwrap();
-                if dir == AST::GT {
-                    Redir::Out(val)
-                } else {
-                    Redir::In(val)
-                }
-            });
-
+    many1(parser(word::<I>).skip(ws()))
+        .and(many(parser(io_redirect::<I>).skip(ws())))
+        .map(|(args, io_redirects): (Vec<AST>, Vec<(i32, FileMode, String)>)| {
             let mut string_args: Vec<String> = args
                 .into_iter()
                 .map(|a| to_value(a).unwrap_or(String::new()))
                 .collect();
             let prog = string_args.remove(0);
+            let io: HashMap<_, _, _> =
+                io_redirects.into_iter().map(|(n, m, f)| (n, (m, f)))
+                .collect();
             Op::Cmd {
                 prog: prog,
                 args: string_args,
@@ -126,7 +138,7 @@ fn assignment<I>(input: State<I>) -> primitives::ParseResult<Op, I>
 where I: Stream<Item=AST> {
     try(satisfy(|t| is_match!(t, AST::String(_)))
         .skip(token(AST::Eql)))
-        .and(parser(arg::<I>))
+        .and(parser(word::<I>))
         .map(|(lhs, rhs)| {
             Op::EqlStmt {
                 lhs: to_value(lhs).unwrap(),
@@ -189,6 +201,8 @@ pub fn parse(line: &str, user_env: &UserEnv) -> Result<Option<Op>, String> {
 #[cfg(test)]
 mod tests {
     use env::UserEnv;
+    use libc::{STDOUT_FILENO, STDIN_FILENO};
+    use std::collections::HashMap;
     use super::*;
 
     #[test]
@@ -205,7 +219,7 @@ mod tests {
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: Vec::new(),
-            io: None,
+            io: HashMap::new(),
         });
     }
 
@@ -216,7 +230,7 @@ mod tests {
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: vec!["arg1".to_string(), "arg2".to_string()],
-            io: None,
+            io: HashMap::new(),
         });
     }
 
@@ -227,7 +241,7 @@ mod tests {
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: vec!["arg1  arg2".to_string()],
-            io: None,
+            io: HashMap::new(),
         });
     }
 
@@ -238,7 +252,7 @@ mod tests {
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: vec!["arg1arg2 arg3arg4 arg5".to_string()],
-            io: None,
+            io: HashMap::new(),
         });
     }
 
@@ -268,12 +282,12 @@ mod tests {
                 Op::Cmd {
                     prog: "cmd1".to_string(),
                     args: Vec::new(),
-                    io: None,
+                    io: HashMap::new(),
                 },
                 Op::Cmd {
                     prog: "cmd2".to_string(),
                     args: vec!["arg".to_string()],
-                    io: None,
+                    io: HashMap::new(),
                 }],
         });
     }
@@ -285,7 +299,9 @@ mod tests {
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd1".to_string(),
             args: Vec::new(),
-            io: Some(Redir::Out("file.txt".to_string())),
+            io: hash_map!{
+                STDOUT_FILENO => (FileMode::Write, "file.txt".to_string()),
+            }
         })
     }
 
@@ -296,7 +312,23 @@ mod tests {
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd1".to_string(),
             args: Vec::new(),
-            io: Some(Redir::In("file.txt".to_string())),
+            io: hash_map!{
+                STDIN_FILENO => (FileMode::Read, "file.txt".to_string()),
+            }
+        })
+    }
+
+    #[test]
+    fn parse_multiple_redirects() {
+        let user_env = UserEnv::new();
+        let cmd = parse("cmd1 2> error.txt > out.txt", &user_env).unwrap().unwrap();
+        assert_eq!(cmd, Op::Cmd {
+            prog: "cmd1".to_string(),
+            args: Vec::new(),
+            io: hash_map!{
+                STDOUT_FILENO => (FileMode::Write, "out.txt".to_string()),
+                2 => (FileMode::Write, "error.txt".to_string()),
+            }
         })
     }
 }
