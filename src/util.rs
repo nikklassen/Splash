@@ -1,4 +1,5 @@
 use std::io::{self, Write};
+use std::fmt::Display;
 
 #[export_macro]
 macro_rules! is_match {
@@ -22,7 +23,7 @@ macro_rules! hash_map(
 );
 
 #[inline]
-pub fn write_err(s: String) {
+pub fn write_err<D: Display>(s: &D) {
     let stderr = io::stderr();
     let res = writeln!(stderr.lock(), "{}", s);
     res.unwrap();

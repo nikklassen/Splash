@@ -1,25 +1,26 @@
 use nix::unistd;
-use std::os::unix::io::{RawFd, AsRawFd};
-use std::fs::File;
+use std::os::unix::io::RawFd;
 
 #[derive(Debug)]
-pub enum Fd {
-    Raw(Raw),
-    File(File),
-}
-
-#[derive(Debug)]
-pub struct Raw {
-    fd: i32,
+pub struct Fd {
+    pub raw_fd: RawFd,
     is_closed: bool,
 }
 
-impl Raw {
-    pub fn new(fd: i32) -> Raw {
-        Raw {
-            fd: fd,
+impl Fd {
+    /// Wraps an existing `fd` in our file descriptor object
+    pub fn new(fd: RawFd) -> Fd {
+        Fd {
+            raw_fd: fd,
             is_closed: false,
         }
+    }
+
+    /// Duplicates the file descriptor
+    pub fn dup(fd: RawFd) -> Result<Fd, String> {
+        let new_fd = try!(unistd::dup(fd)
+            .or(Err(format!("{}: bad file descriptor", fd))));
+        Ok(Fd::new(new_fd))
     }
 
     pub fn close(&mut self) {
@@ -27,48 +28,16 @@ impl Raw {
             return;
         }
 
-        unistd::close(self.fd).unwrap();
+        unistd::close(self.raw_fd).unwrap();
         self.is_closed = true;
     }
 }
 
-impl Drop for Raw {
+impl Drop for Fd {
     fn drop(&mut self) {
-        if self.fd > 2 && !self.is_closed {
+        // Don't automatically drop any of the default file descriptors
+        if self.raw_fd > 2 && !self.is_closed {
             self.close();
         }
-    }
-}
-
-impl Fd {
-    /// Wraps an existing `fd` in a raw file descriptor object
-    pub fn new(fd: i32) -> Fd {
-        Fd::Raw(Raw::new(fd))
-    }
-
-    /// Duplicates the file descriptor
-    pub fn dup(fd: i32) -> Fd {
-        Fd::Raw(Raw::new(unistd::dup(fd).unwrap()))
-    }
-
-    pub fn get_fd(&self) -> RawFd {
-        match self {
-            &Fd::Raw(ref p) => p.fd,
-            &Fd::File(ref f) => f.as_raw_fd(),
-        }
-    }
-
-    pub fn close(&mut self) {
-        match self {
-            &mut Fd::Raw(ref mut p) => p.close(),
-            // no-op since files automatically closed
-            &mut Fd::File(..) => {},
-        }
-    }
-}
-
-impl From<File> for Fd {
-    fn from(f: File) -> Fd {
-        Fd::File(f)
     }
 }

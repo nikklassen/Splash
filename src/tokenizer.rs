@@ -1,5 +1,35 @@
 use std::fmt::{Display, Formatter, Error};
 
+macro_rules! accept {
+    ( $reader: ident, $ret_val: expr ) => {
+        { $reader.advance(); return Ok(Some($ret_val)); }
+    }
+}
+
+#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
+pub enum RedirOp {
+    LESS,
+    DLESS,
+    DLESSDASH,
+    LESSAND,
+    LESSGREAT,
+
+    GREAT,
+    DGREAT,
+    GREATAND,
+    CLOBBER,
+}
+
+impl RedirOp {
+    pub fn is_out(&self) -> bool {
+        match *self {
+            RedirOp::GREAT | RedirOp::DGREAT |
+                RedirOp::GREATAND | RedirOp::CLOBBER => true,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
 pub enum AST {
     Whitespace,
@@ -8,8 +38,7 @@ pub enum AST {
     Var(String),
     Eql,
     Pipe,
-    LT(Option<i32>),
-    GT(Option<i32>),
+    Redir(Option<i32>, RedirOp),
 }
 
 impl Display for AST {
@@ -97,12 +126,34 @@ fn pipe_tok(reader: &mut CharReader) -> ASTResult {
     char_tok(reader, '|', AST::Pipe)
 }
 
-fn redir_in_tok(reader: &mut CharReader) -> ASTResult {
-    char_tok(reader, '<', AST::LT(None))
-}
-
-fn redir_out_tok(reader: &mut CharReader) -> ASTResult {
-    char_tok(reader, '>', AST::GT(None))
+fn redir_tok(reader: &mut CharReader) -> ASTResult {
+    match reader.current {
+        Some('<') => {
+            reader.advance();
+            match reader.current {
+                Some('<') => {
+                    reader.advance();
+                    match reader.current {
+                        Some('-') => accept!(reader, AST::Redir(None, RedirOp::DLESSDASH)),
+                        _ => Ok(Some(AST::Redir(None, RedirOp::DLESS))),
+                    }
+                },
+                Some('>') => accept!(reader, AST::Redir(None, RedirOp::LESSGREAT)),
+                Some('&') => accept!(reader, AST::Redir(None, RedirOp::LESSAND)),
+                _ => Ok(Some(AST::Redir(None, RedirOp::LESS))),
+            }
+        },
+        Some('>') => {
+            reader.advance();
+            match reader.current {
+                Some('>') => accept!(reader, AST::Redir(None, RedirOp::DGREAT)),
+                Some('|') => accept!(reader, AST::Redir(None, RedirOp::CLOBBER)),
+                Some('&') => accept!(reader, AST::Redir(None, RedirOp::GREATAND)),
+                _ => Ok(Some(AST::Redir(None, RedirOp::GREAT))),
+            }
+        },
+        _ => Ok(None),
+    }
 }
 
 fn escaped_tok(reader: &mut CharReader) -> ASTResult {
@@ -201,19 +252,18 @@ fn num_tok(reader: &mut CharReader) -> ASTResult {
     num.push(c);
     loop {
         reader.advance();
-        match reader.current {
+        let current = reader.current;
+        match current {
             Some(c) if c.is_digit(10) => {
                 num.push(c);
             },
-            Some('<') => {
-                reader.advance();
+            Some('<') | Some('>') => {
+                let redir = try!(redir_tok(reader));
                 let n = num.parse::<i32>().unwrap();
-                return Ok(Some(AST::LT(Some(n))));
-            },
-            Some('>') => {
-                reader.advance();
-                let n = num.parse::<i32>().unwrap();
-                return Ok(Some(AST::GT(Some(n))));
+                return match redir {
+                    Some(AST::Redir(_, op)) => Ok(Some(AST::Redir(Some(n), op))),
+                    _ => unreachable!(),
+                };
             },
             _ => {
                 return Ok(Some(AST::String(num)));
@@ -264,8 +314,7 @@ pub fn tokenize(s: &str) -> Result<Vec<AST>, String> {
         escaped_tok,
         lit_string_tok,
         quotemark_tok,
-        redir_in_tok,
-        redir_out_tok,
+        redir_tok,
         num_tok,
         var_tok,
         eql_tok,
@@ -372,14 +421,38 @@ mod tests {
     }
 
     #[test]
-    fn parse_redirect() {
-        let t = tokenize(">").unwrap();
-        assert_eq!(t, vec![AST::GT(None)]);
+    fn parse_redirects() {
+        let mut t = tokenize(">").unwrap();
+        assert_eq!(t, vec![AST::Redir(None, RedirOp::GREAT)]);
+
+        t = tokenize(">>").unwrap();
+        assert_eq!(t, vec![AST::Redir(None, RedirOp::DGREAT)]);
+
+        t = tokenize(">&").unwrap();
+        assert_eq!(t, vec![AST::Redir(None, RedirOp::GREATAND)]);
+
+        t = tokenize(">|").unwrap();
+        assert_eq!(t, vec![AST::Redir(None, RedirOp::CLOBBER)]);
+
+        t = tokenize("<").unwrap();
+        assert_eq!(t, vec![AST::Redir(None, RedirOp::LESS)]);
+
+        t = tokenize("<<").unwrap();
+        assert_eq!(t, vec![AST::Redir(None, RedirOp::DLESS)]);
+
+        t = tokenize("<<-").unwrap();
+        assert_eq!(t, vec![AST::Redir(None, RedirOp::DLESSDASH)]);
+
+        t = tokenize("<&").unwrap();
+        assert_eq!(t, vec![AST::Redir(None, RedirOp::LESSAND)]);
+
+        t = tokenize("<>").unwrap();
+        assert_eq!(t, vec![AST::Redir(None, RedirOp::LESSGREAT)]);
     }
 
     #[test]
-    fn parse_io_redirect() {
+    fn parse_numbered_redirect() {
         let t = tokenize("3<").unwrap();
-        assert_eq!(t, vec![AST::LT(Some(3))]);
+        assert_eq!(t, vec![AST::Redir(Some(3), RedirOp::LESS)]);
     }
 }

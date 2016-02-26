@@ -4,13 +4,13 @@ use combine::primitives::{Stream, Positioner};
 use env::UserEnv;
 use interpolate;
 use libc::{STDOUT_FILENO, STDIN_FILENO};
-use std::collections::HashMap;
-use tokenizer::{self, AST};
+use nix::fcntl::{self, OFlag};
+use tokenizer::{self, AST, RedirOp};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FileMode {
-    Read,
-    Write,
+pub enum Redir {
+    Copy(i32),
+    File(String, OFlag),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,7 +18,7 @@ pub enum Op {
     Cmd {
         prog: String,
         args: Vec<String>,
-        io: HashMap<i32, (FileMode, String)>,
+        io: Vec<(i32, Redir)>,
     },
     EqlStmt {
         lhs: String,
@@ -91,24 +91,35 @@ fn to_value(a: AST) -> Option<String> {
     }
 }
 
-fn io_redirect<I>(input: State<I>) -> primitives::ParseResult<(i32, FileMode, String), I>
+fn build_io_redirect((redir, io_file): (AST, AST)) -> (i32, Redir) {
+    let file_name = to_value(io_file).unwrap();
+    let io_number;
+    let redir_op;
+    if let AST::Redir(io_number_opt, op) = redir {
+        io_number = io_number_opt.unwrap_or(
+            if op.is_out() { STDOUT_FILENO } else { STDIN_FILENO });
+        redir_op = op;
+    } else {
+        unreachable!();
+    }
+    (io_number, match redir_op {
+        RedirOp::LESS => Redir::File(file_name, fcntl::O_RDONLY),
+        RedirOp::LESSAND => Redir::Copy(file_name.parse::<i32>().unwrap()),
+        RedirOp::LESSGREAT => Redir::File(file_name, fcntl::O_RDWR | fcntl::O_CREAT),
+
+        RedirOp::GREAT | RedirOp::CLOBBER => Redir::File(file_name, fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_TRUNC),
+        RedirOp::DGREAT => Redir::File(file_name, fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_APPEND),
+        RedirOp::GREATAND => Redir::Copy(file_name.parse::<i32>().unwrap()),
+        _ => unimplemented!(),
+    })
+}
+
+fn io_redirect<I>(input: State<I>) -> primitives::ParseResult<(i32, Redir), I>
 where I: Stream<Item=AST> {
-    satisfy(|t| is_match!(t, AST::GT(_)) || is_match!(t, AST::LT(_)))
+    satisfy(|t| is_match!(t, AST::Redir(..)))
          .skip(ws())
          .and(parser(word::<I>))
-    .map(|(dir, io_file_ast): (AST, AST)| {
-        let io_file = to_value(io_file_ast).unwrap();
-        let mut io_mode = FileMode::Read;
-        let mut io_number = 0;
-        if let AST::GT(io_number_opt) = dir {
-            io_mode = FileMode::Write;
-            io_number = io_number_opt.unwrap_or(STDOUT_FILENO);
-        }
-        if let AST::LT(io_number_opt) = dir {
-            io_number = io_number_opt.unwrap_or(STDIN_FILENO);
-        }
-        (io_number, io_mode, io_file)
-    })
+    .map(build_io_redirect)
     .parse_state(input)
 }
 
@@ -116,19 +127,16 @@ fn command<I>(input: State<I>) -> primitives::ParseResult<Op, I>
 where I: Stream<Item=AST> {
     many1(parser(word::<I>).skip(ws()))
         .and(many(parser(io_redirect::<I>).skip(ws())))
-        .map(|(args, io_redirects): (Vec<AST>, Vec<(i32, FileMode, String)>)| {
+        .map(|(args, io_redirects): (Vec<AST>, Vec<(i32, Redir)>)| {
             let mut string_args: Vec<String> = args
                 .into_iter()
                 .map(|a| to_value(a).unwrap_or(String::new()))
                 .collect();
             let prog = string_args.remove(0);
-            let io: HashMap<_, _, _> =
-                io_redirects.into_iter().map(|(n, m, f)| (n, (m, f)))
-                .collect();
             Op::Cmd {
                 prog: prog,
                 args: string_args,
-                io: io,
+                io: io_redirects,
             }
         })
         .parse_state(input)
@@ -202,7 +210,7 @@ pub fn parse(line: &str, user_env: &UserEnv) -> Result<Option<Op>, String> {
 mod tests {
     use env::UserEnv;
     use libc::{STDOUT_FILENO, STDIN_FILENO};
-    use std::collections::HashMap;
+    use nix::fcntl;
     use super::*;
 
     #[test]
@@ -219,7 +227,7 @@ mod tests {
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: Vec::new(),
-            io: HashMap::new(),
+            io: Vec::new(),
         });
     }
 
@@ -230,7 +238,7 @@ mod tests {
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: vec!["arg1".to_string(), "arg2".to_string()],
-            io: HashMap::new(),
+            io: Vec::new(),
         });
     }
 
@@ -241,7 +249,7 @@ mod tests {
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: vec!["arg1  arg2".to_string()],
-            io: HashMap::new(),
+            io: Vec::new(),
         });
     }
 
@@ -252,7 +260,7 @@ mod tests {
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: vec!["arg1arg2 arg3arg4 arg5".to_string()],
-            io: HashMap::new(),
+            io: Vec::new(),
         });
     }
 
@@ -282,12 +290,12 @@ mod tests {
                 Op::Cmd {
                     prog: "cmd1".to_string(),
                     args: Vec::new(),
-                    io: HashMap::new(),
+                    io: Vec::new(),
                 },
                 Op::Cmd {
                     prog: "cmd2".to_string(),
                     args: vec!["arg".to_string()],
-                    io: HashMap::new(),
+                    io: Vec::new(),
                 }],
         });
     }
@@ -295,40 +303,33 @@ mod tests {
     #[test]
     fn parse_redir_out() {
         let user_env = UserEnv::new();
-        let cmd = parse("cmd1 > file.txt", &user_env).unwrap().unwrap();
+        let cmd = parse("cmd1 > file.txt >> log.txt 2>&1", &user_env).unwrap().unwrap();
+        let write_flags = fcntl::O_WRONLY | fcntl::O_CREAT;
+        let trunc_flags = write_flags | fcntl::O_TRUNC;
+        let append_flags = write_flags | fcntl::O_APPEND;
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd1".to_string(),
             args: Vec::new(),
-            io: hash_map!{
-                STDOUT_FILENO => (FileMode::Write, "file.txt".to_string()),
-            }
+            io: vec![
+                (STDOUT_FILENO, Redir::File("file.txt".to_string(), trunc_flags)),
+                (STDOUT_FILENO, Redir::File("log.txt".to_string(), append_flags)),
+                (2, Redir::Copy(1)),
+            ],
         })
     }
 
     #[test]
     fn parse_redir_in() {
         let user_env = UserEnv::new();
-        let cmd = parse("cmd1 < file.txt", &user_env).unwrap().unwrap();
+        let cmd = parse("cmd1 < file.txt <&3", &user_env).unwrap().unwrap();
+        let read_flags = fcntl::O_RDONLY;
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd1".to_string(),
             args: Vec::new(),
-            io: hash_map!{
-                STDIN_FILENO => (FileMode::Read, "file.txt".to_string()),
-            }
-        })
-    }
-
-    #[test]
-    fn parse_multiple_redirects() {
-        let user_env = UserEnv::new();
-        let cmd = parse("cmd1 2> error.txt > out.txt", &user_env).unwrap().unwrap();
-        assert_eq!(cmd, Op::Cmd {
-            prog: "cmd1".to_string(),
-            args: Vec::new(),
-            io: hash_map!{
-                STDOUT_FILENO => (FileMode::Write, "out.txt".to_string()),
-                2 => (FileMode::Write, "error.txt".to_string()),
-            }
+            io: vec![
+                (STDIN_FILENO, Redir::File("file.txt".to_string(), read_flags)),
+                (STDIN_FILENO, Redir::Copy(3)),
+            ],
         })
     }
 }

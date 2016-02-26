@@ -130,3 +130,17 @@ fn redirect_in_other_fd() {
     assert_eq!(output, String::from("hello\n"));
     assert_eq!(ecode, 0);
 }
+
+#[test]
+fn redirect_out_other_fd() {
+    let mut f = NamedTempFile::new().unwrap();
+
+    let (ecode, output) = run_command(format!("echo 'hello' | cat 3> {} >&3", f.path().display()));
+
+    assert_eq!(output, String::new());
+    assert_eq!(ecode, 0);
+
+    let mut contents = String::new();
+    f.read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, "hello\n");
+}

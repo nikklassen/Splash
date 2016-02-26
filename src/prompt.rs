@@ -9,6 +9,7 @@ use std::ffi::CString;
 use std::io::{self, Write};
 use nix::unistd::isatty;
 use std::process::exit;
+use util::write_err;
 
 static WAVE_EMOJI: &'static str = "\u{1F30A}";
 
@@ -37,7 +38,7 @@ pub fn input_loop() {
 
         match execute(&mut builtins, &mut user_env, command.unwrap()) {
             Err(e) => {
-                writeln!(stderr.lock(), "An error occured: {}", e).unwrap();
+                write_err(&format!("splash: {}", e));
             },
             Ok(n) => {
                 last_status = n;

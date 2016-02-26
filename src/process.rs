@@ -1,18 +1,19 @@
 use builtin::{BuiltinMap, Builtin};
 use file::Fd;
-use lexer::{Op, FileMode};
+use lexer::{Op, Redir};
+use std::path::Path;
 use libc::{STDOUT_FILENO, STDIN_FILENO};
 use nix::errno::Errno;
 use nix::sys::wait::{self, WaitStatus};
+use nix::sys::stat;
 use nix::unistd::{self, Fork, execvp};
-use nix::fcntl;
-use std::collections::HashMap;
+use nix::{fcntl, NixPath};
 use std::ffi::CString;
 use std::fmt::Debug;
-use std::fs::File;
 use std::io::{self, Write};
 use std::ops::IndexMut;
 use std::{iter, process};
+use std::result;
 use util;
 
 #[derive(Debug)]
@@ -20,7 +21,7 @@ pub struct Process {
     pub pid: i32,
     pub prog: String,
     pub args: Vec<String>,
-    pub io: HashMap<i32, Fd>
+    pub io: Vec<(i32, Fd)>,
 }
 
 impl Process {
@@ -29,16 +30,23 @@ impl Process {
             pid: 0,
             prog: prog,
             args: args,
-            io: hash_map!{
-                STDIN_FILENO => Fd::new(STDIN_FILENO),
-                STDOUT_FILENO => Fd::new(STDOUT_FILENO),
-            },
+            io: Vec::new(),
         }
     }
 }
 
+fn sequence<T, E>(v: Vec<Result<T, E>>) -> result::Result<Vec<T>, E>
+where T: Debug, E: Debug + Clone {
+    for res in v.iter() {
+        if let &Err(ref e) = res {
+            return Err(e.clone());
+        }
+    }
+    Ok(v.into_iter().map(|i| i.unwrap()).collect())
+}
+
 pub fn run_processes(builtins: &mut BuiltinMap, command: Op) -> Result<i32, String> {
-    let mut procs = op_to_processes(command);
+    let mut procs = try!(op_to_processes(command).or_else(|e| Err(format!("{}", e))));
     let mut result = Ok(0);
 
     // TODO all threads need to be spawned then the last waited for
@@ -65,15 +73,15 @@ fn wait_for_pid(p: &Process) -> Result<i32, String> {
             if exit_code < 0 {
                 match Errno::from_i32(!exit_code as i32) {
                     Errno::ENOENT => {
-                        util::write_err(format!("splash: {}: command not found", p.prog))
+                        util::write_err(&format!("splash: {}: command not found", p.prog))
                     }
                     Errno::EACCES => {
-                        util::write_err(format!("splash: permission denied: {}", p.prog))
+                        util::write_err(&format!("splash: permission denied: {}", p.prog))
                     }
                     Errno::ENOTDIR => {
-                        util::write_err(format!("splash: not a directory: {}", p.prog))
+                        util::write_err(&format!("splash: not a directory: {}", p.prog))
                     }
-                    e => util::write_err(format!("splash: {}: {}", e.desc(), p.prog)),
+                    e => util::write_err(&format!("splash: {}: {}", e.desc(), p.prog)),
                 }
                 Ok(127)
             } else {
@@ -90,70 +98,72 @@ macro_rules! str_vec {
     }
 }
 
-fn op_to_processes(op: Op) -> Vec<Process> {
+fn add_redirects_to_io(io: &mut Vec<(i32, Fd)>, redirects: &Vec<(i32, Redir)>) -> Result<(), String> {
+    for &(ref io_number, ref io_redirect) in redirects {
+        let fd = match io_redirect {
+            &Redir::File(ref name, ref flags) => {
+                let mode = stat::S_IRUSR | stat::S_IWUSR | stat::S_IRGRP | stat::S_IROTH;
+                let path = Path::new(name);
+                let file = try!(fcntl::open(path, *flags, mode).or_else(show_err));
+                Fd::new(file)
+            },
+            &Redir::Copy(n) => try!(Fd::dup(n)),
+        };
+        io.push((*io_number, fd));
+    }
+    Ok(())
+}
+
+fn has_fd(target_fd: i32, io: &Vec<(i32, Redir)>) -> bool {
+    io.iter().any(|&(fd, _)| fd == target_fd)
+}
+
+fn op_to_processes(op: Op) -> Result<Vec<Process>, String> {
     match op {
         Op::Cmd { prog, args, io } => {
             let mut p = Process::new(prog, args);
-            if !io.contains_key(&STDOUT_FILENO) {
-                p.io.insert(STDOUT_FILENO, Fd::dup(STDOUT_FILENO));
+            if has_fd(STDOUT_FILENO, &io) {
+                let stdout_dup = try!(Fd::dup(STDOUT_FILENO));
+                p.io.push((STDOUT_FILENO, stdout_dup));
             }
-            if !io.contains_key(&STDIN_FILENO) {
-                p.io.insert(STDIN_FILENO, Fd::dup(STDIN_FILENO));
+            if has_fd(STDIN_FILENO, &io) {
+                let stdin_dup = try!(Fd::dup(STDIN_FILENO));
+                p.io.push((STDIN_FILENO, stdin_dup));
             }
-            for (io_number, (io_mode, io_file)) in io {
-                let file = if io_mode == FileMode::Read {
-                    File::open(io_file).unwrap()
-                } else {
-                    File::create(io_file).unwrap()
-                };
-                p.io.insert(io_number, Fd::from(file));
-            }
-            vec![p]
+            try!(add_redirects_to_io(&mut p.io, &io));
+            Ok(vec![p])
         }
         Op::Pipe { cmds } => {
-            let mut procs: Vec<_> = cmds
+            let mut procs: Vec<Process> = try!(sequence(cmds
                 .into_iter()
                 .map(|cmd| {
                     match cmd {
                         Op::Cmd { prog, args, io } => {
                             let mut p = Process::new(prog, args);
-                            for (io_number, (io_mode, io_file)) in io {
-                                let file = if io_mode == FileMode::Read {
-                                    File::open(io_file).unwrap()
-                                } else {
-                                    File::create(io_file).unwrap()
-                                };
-                                p.io.insert(io_number, Fd::from(file));
-                            }
-                            p
+                            add_redirects_to_io(&mut p.io, &io)
+                                .and(Ok(p))
                         }
                         _ => unreachable!(),
                     }
                 })
-                .collect();
+                .collect()));
 
             let num_procs = procs.len();
-            let mut prev_pipe_out = Fd::dup(STDIN_FILENO);
+            let mut prev_pipe_out = try!(Fd::dup(STDIN_FILENO));
+
+            let has_input = |io: &Vec<(i32, Fd)>| io.iter().find(|io_item| io_item.0 == STDIN_FILENO).is_some();
 
             for i in 0..(num_procs - 1) {
                 let ref mut p = procs.index_mut(i);
                 let (pipe_out, pipe_in) = unistd::pipe().unwrap();
-                // Replace the fake default stdin/stdout with the pipeline chain
-                if let Some(&Fd::Raw(_)) = p.io.get(&STDOUT_FILENO) {
-                    p.io.insert(STDOUT_FILENO, Fd::new(pipe_in));
-                } else {
-                    // Close the output since this process will be writing to a file
-                    unistd::close(pipe_in).unwrap();
-                }
-                if let Some(&Fd::Raw(_)) = p.io.get(&STDIN_FILENO) {
-                    p.io.insert(STDIN_FILENO, prev_pipe_out);
-                } else if i != 0 {
-                    // Ignore the previous output since this process is reading from a file,
-                    // prev_pipe_out will be dropped and closed as necessary
-                    util::write_err(format!(
+                if has_input(&p.io) {
+                    util::write_err(&format!(
                         "splash: Ignoring piped input for {}; programs may not behave as expected.",
                         p.prog));
                 }
+                // insert at the front so these file descriptors will be overwritten by anything later
+                p.io.insert(0, (STDOUT_FILENO, Fd::new(pipe_in)));
+                p.io.insert(0, (STDIN_FILENO, prev_pipe_out));
 
                 prev_pipe_out = Fd::new(pipe_out);
             }
@@ -161,63 +171,47 @@ fn op_to_processes(op: Op) -> Vec<Process> {
             // End the borrow of procs before we return it
             {
                 let mut last_proc = procs.last_mut().unwrap();
-                if let Some(&Fd::Raw(_)) = last_proc.io.get(&STDOUT_FILENO) {
-                    last_proc.io.insert(STDOUT_FILENO, Fd::dup(STDOUT_FILENO));
-                }
-                // Like above, if prev_pipe_out is not used here it will be dropped and cleaned up
-                if let Some(&Fd::Raw(_)) = last_proc.io.get(&STDIN_FILENO) {
-                    last_proc.io.insert(STDIN_FILENO, prev_pipe_out);
-                } else if num_procs > 1 {
-                    util::write_err(format!(
+                if num_procs > 1 && has_input(&last_proc.io) {
+                    util::write_err(&format!(
                         "splash: Ignoring piped input for {}; programs may not behave as expected.",
                         last_proc.prog));
                 }
+                let stdout_dup = try!(Fd::dup(STDOUT_FILENO));
+                last_proc.io.insert(0, (STDOUT_FILENO, stdout_dup));
+                last_proc.io.insert(0, (STDIN_FILENO, prev_pipe_out));
             }
-            procs
+            Ok(procs)
         }
-        _ => panic!("{:?} is not executable", op),
-    }
-}
-
-// Get the largest file descriptor we want to have open
-// this will be passed to fcntl so we don't end up with conflicting file descriptors when we
-// actually open them
-fn reopen_no_conflict(io_table: &mut HashMap<i32, Fd>) {
-    let mut first_unwanted = {
-        io_table.keys().max().unwrap_or(&0) + 1
-    };
-    let redirects: Vec<_> =
-        io_table.iter()
-            .map(|(&io_number, fd)| (io_number, fd.get_fd()))
-            .collect();
-    for (io_number, fd) in redirects {
-        if io_table.contains_key(&fd) {
-            let new_fd = fcntl::fcntl(fd, fcntl::FcntlArg::F_DUPFD(first_unwanted)).unwrap();
-            first_unwanted += 1;
-            io_table.insert(io_number, Fd::new(new_fd));
-        }
+        _ => unreachable!(),
     }
 }
 
 /// To be called after forking this function will reassign the file descriptors correctly for the
 /// child process
-fn remap_fds(process: &mut Process) {
-    reopen_no_conflict(&mut process.io);
-    for (&io_number, fd) in process.io.iter_mut() {
-        unistd::dup2(fd.get_fd(), io_number).unwrap();
+fn remap_fds(process: &mut Process) -> Result<(), String> {
+    for &mut (io_number, ref mut fd) in process.io.iter_mut() {
+        let raw_fd = fd.raw_fd;
+        if io_number == raw_fd { continue };
+
+        try!(unistd::dup2(raw_fd, io_number)
+             .map_err(|_| format!("{}: bad file descriptor", raw_fd)));
         fd.close();
     }
+    Ok(())
 }
 
 fn fork_builtin(process: &mut Process, cmd: &mut Box<Builtin>) {
     let f = unistd::fork().unwrap();
     if let Fork::Parent(pid) = f {
         process.pid = pid;
-        for (_io_number, fd) in process.io.iter_mut() {
+        for &mut (_io_number, ref mut fd) in process.io.iter_mut() {
             fd.close();
         }
     } else {
-        remap_fds(process);
+        if let Err(e) = remap_fds(process) {
+            println!("Got error: {}", e);
+            process::exit(1);
+        }
 
         let result = cmd.run(&process.args[..]);
         let exit_code = match result {
@@ -236,11 +230,14 @@ fn fork_proc(process: &mut Process) {
     let f = unistd::fork().unwrap();
     if let Fork::Parent(pid) = f {
         process.pid = pid;
-        for (_io_number, fd) in process.io.iter_mut() {
+        for &mut (_io_number, ref mut fd) in process.io.iter_mut() {
             fd.close();
         }
     } else {
-        remap_fds(process);
+        if let Err(e) = remap_fds(process) {
+            println!("Got error: {}", e);
+            process::exit(1);
+        }
 
         let args = &iter::once(process.prog.clone())
             .chain(process.args.iter().cloned())
