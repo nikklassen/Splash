@@ -125,9 +125,10 @@ where I: Stream<Item=AST> {
 
 fn command<I>(input: State<I>) -> primitives::ParseResult<Op, I>
 where I: Stream<Item=AST> {
-    many1(parser(word::<I>).skip(ws()))
+    many(parser(io_redirect::<I>).skip(ws()))
+        .and(many1(parser(word::<I>).skip(ws())))
         .and(many(parser(io_redirect::<I>).skip(ws())))
-        .map(|(args, io_redirects): (Vec<AST>, Vec<(i32, Redir)>)| {
+        .map(|((redirect_prefix, args), redirect_suffix): ((Vec<(i32, Redir)>, Vec<AST>), Vec<(i32, Redir)>)| {
             let mut string_args: Vec<String> = args
                 .into_iter()
                 .map(|a| to_value(a).unwrap_or(String::new()))
@@ -136,7 +137,7 @@ where I: Stream<Item=AST> {
             Op::Cmd {
                 prog: prog,
                 args: string_args,
-                io: io_redirects,
+                io: redirect_prefix.into_iter().chain(redirect_suffix).collect(),
             }
         })
         .parse_state(input)
@@ -329,6 +330,20 @@ mod tests {
             io: vec![
                 (STDIN_FILENO, Redir::File("file.txt".to_string(), read_flags)),
                 (STDIN_FILENO, Redir::Copy(3)),
+            ],
+        })
+    }
+
+    #[test]
+    fn parse_redir_prefix() {
+        let user_env = UserEnv::new();
+        let cmd = parse("> file.txt cmd1", &user_env).unwrap().unwrap();
+        let write_flags = fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_TRUNC;
+        assert_eq!(cmd, Op::Cmd {
+            prog: "cmd1".to_string(),
+            args: Vec::new(),
+            io: vec![
+                (STDOUT_FILENO, Redir::File("file.txt".to_string(), write_flags)),
             ],
         })
     }
