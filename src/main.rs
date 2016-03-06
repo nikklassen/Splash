@@ -22,6 +22,7 @@ mod lexer;
 mod process;
 mod prompt;
 mod tokenizer;
+mod file;
 
 use getopts::Options;
 
