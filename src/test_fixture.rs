@@ -1,12 +1,15 @@
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::sync::{Arc, Mutex, StaticMutex, MUTEX_INIT};
 
-static TEST_LOCK: StaticMutex = MUTEX_INIT;
+lazy_static! {
+    // The contents don't actually matter
+    static ref TEST_LOCK: Mutex<u8> = Mutex::new(0);
+}
 
 #[export_macro]
 macro_rules! test {
     ($name: expr, $func: ident) => {
-        (String::from($name), box Self::$func)
+        (String::from($name), Box::new(Self::$func))
     }
 }
 
@@ -35,17 +38,23 @@ fn test_fixture_inner<T: TestFixture + Send + 'static>(fixture: Arc<Mutex<T>>) {
 
     let tests = fixture.lock().unwrap().tests();
     for (t_name, t) in tests.into_iter() {
+
         let fixture = fixture.clone();
 
-        let handle = thread::spawn(move || {
-            let mut fixture = fixture.lock().unwrap();
+        let handle = thread::Builder::new()
+            .name(t_name.clone())
+            .spawn(move || {
+                let mut fixture = fixture.lock().unwrap();
 
-            fixture.before_each();
-            t(&mut *fixture);
-            fixture.after_each();
-        });
+                fixture.before_each();
+                t(&mut *fixture);
+                fixture.after_each();
+            })
+            .unwrap();
 
-        if let Err(_) = handle.join() {
+        let result = handle.join();
+
+        if let Err(_) = result {
             println!("{} ... FAILED!", t_name);
             has_failure = true;
         } else {

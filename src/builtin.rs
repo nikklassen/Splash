@@ -106,7 +106,7 @@ impl Builtin for Echo {
                         "Unable to parse arguments.")) },
         };
 
-        let remaining_args = matches.free.connect(" ");
+        let remaining_args = matches.free.join(" ");
 
         if matches.opt_present("n") {
             print!("{}", remaining_args);
@@ -156,14 +156,14 @@ mod tests {
             let mut pwd = env::temp_dir();
             pwd.push("pwd");
 
-            fs::create_dir(&pwd);
+            fs::create_dir(&pwd).unwrap();
             self.pwd = pwd;
             env::set_current_dir(&self.pwd).unwrap();
             env::set_var("PWD", &self.pwd);
         }
 
         fn teardown(&mut self) {
-            fs::remove_dir(&self.pwd);
+            fs::remove_dir(&self.pwd).unwrap();
         }
 
         fn tests(&self) -> TestList<Self> {

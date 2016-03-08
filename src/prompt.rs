@@ -1,85 +1,121 @@
-use builtin;
-use builtin::BuiltinMap;
-use parser;
-use parser::AST;
-use readline::*;
+use builtin::{self, BuiltinMap};
+use env::UserEnv;
+use lexer::{self, Op};
+use libc::STDIN_FILENO;
+use process;
+use readline::{readline_bare, add_history, Error, ReadlineBytes};
 use std::env;
-use std::io;
-use std::process::Command;
+use std::ffi::CString;
+use std::io::{self, Write};
+use nix::unistd::isatty;
+use std::process::exit;
+use util::write_err;
 
 static WAVE_EMOJI: &'static str = "\u{1F30A}";
 
 pub fn input_loop() {
     let mut builtins = builtin::init_builtins();
+    let mut user_env = UserEnv::new();
+
+    let mut last_status = 0;
     loop {
-        let input = readline(&get_prompt_string());
-        let line = match input {
-            Ok(l) => l,
-            // ^D
-            Err(_) => return,
-        };
+        let line = getline();
+        if line.is_none() {
+            break;
+        }
+        let parsed = lexer::parse(&line.unwrap(), &user_env);
 
-        add_history(&line);
-
-        let parsed = parser::parse_command(&line);
+        let stderr = io::stderr();
         if let Err(e) = parsed {
-            println!("Error: {:?}", e.errors);
+            writeln!(stderr.lock(), "Error: {:?}", e).unwrap();
             continue;
         }
 
-        let tokens: Vec<String>;
-        match parsed.unwrap() {
-            Some(ts) => {
-                tokens = ts.into_iter().map(|t| {
-                    match t {
-                        AST::Word(s) => s,
-                    }
-                }).collect();
+        let command = parsed.unwrap();
+        if command.is_none() {
+            continue;
+        }
+
+        match execute(&mut builtins, &mut user_env, command.unwrap()) {
+            Err(e) => {
+                write_err(&format!("splash: {}", e));
             },
-            None => {
-                continue;
+            Ok(n) => {
+                last_status = n;
+            },
+        };
+    }
+
+    exit(last_status);
+}
+
+fn getline() -> Option<String> {
+    let res = isatty(STDIN_FILENO);
+    // If stdin is closed
+    if res.is_err() {
+        return None;
+    }
+    if res.unwrap() {
+        let input = readline();
+        match input {
+            Ok(ref l) => {
+                add_history(l);
+                Some(l.to_string_lossy().into_owned())
+            },
+            // ^D
+            Err(_) => {
+                None
             }
         }
-
-        if tokens.len() == 0 {
-            continue;
+    } else {
+        let mut buf = String::new();
+        match io::stdin().read_line(&mut buf) {
+            // An error or ^D
+            Err(_) | Ok(0) => {
+                return None;
+            }
+            _ => {}
         }
-
-        if let Err(e) = execute(&mut builtins, &tokens) {
-            println!("{}", e);
-        }
+        // Remove trailing newline
+        buf.pop();
+        Some(buf)
     }
+}
+
+fn readline() -> Result<ReadlineBytes, Error> {
+    let prompt = CString::new(get_prompt_string()).unwrap();
+    readline_bare(&prompt)
 }
 
 fn get_prompt_string() -> String {
     let pwd = env::var("PWD")
         .map(|v| {
-            let home = env::var("HOME").unwrap_or("".to_string());
+            let home = env::var("HOME").unwrap_or(String::new());
             v.replace(&home, "~") + " "
-        }).unwrap_or("".to_string());
+        }).unwrap_or(String::new());
     format!("{}{}  ", pwd, WAVE_EMOJI)
 }
 
-fn execute(builtins: &mut BuiltinMap, args: &Vec<String>) -> io::Result<i32> {
-    if let Some(cmd) = builtins.get_mut(&args[0]) {
-        return cmd.run(&args[1..]);
+fn execute(builtins: &mut BuiltinMap, user_env: &mut UserEnv, command: Op) -> Result<i32, String> {
+    match command {
+        Op::EqlStmt { lhs, rhs } => {
+            let entry = user_env.vars.entry(lhs)
+                .or_insert(String::new());
+            *entry = rhs;
+            Ok(0)
+        },
+        op => process::run_processes(builtins, op),
     }
-
-    let mut child = try!(Command::new(&args[0])
-        .args(&args[1..])
-        .spawn());
-
-    child.wait()
-        .and_then(|result| {
-            Ok(result.code().unwrap_or(0))
-        })
 }
 
 #[cfg(test)]
 mod tests {
+    use builtin;
+    use env::UserEnv;
+    use lexer::Op;
     use std::env;
     use std::path::PathBuf;
-    use super::{get_prompt_string, WAVE_EMOJI};
+    use super::{get_prompt_string, WAVE_EMOJI, execute};
     use test_fixture::*;
 
     struct PromptTests;
@@ -130,5 +166,18 @@ mod tests {
     fn prompt_tests() {
         let fixture = PromptTests;
         test_fixture_runner(fixture);
+    }
+
+    #[test]
+    fn add_var() {
+        let mut builtins = builtin::init_builtins();
+        let mut user_env = UserEnv::new();
+
+        execute(&mut builtins, &mut user_env, Op::EqlStmt {
+            lhs: "FOO".to_string(),
+            rhs: "bar".to_string()
+        }).unwrap();
+
+        assert_eq!(user_env.vars["FOO"], "bar".to_string());
     }
 }
