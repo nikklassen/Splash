@@ -1,19 +1,21 @@
 use builtin::{BuiltinMap, Builtin};
 use file::Fd;
 use lexer::{Op, Redir};
-use std::path::Path;
 use libc::{STDOUT_FILENO, STDIN_FILENO};
+use libc;
 use nix::errno::Errno;
+use nix::sys::{stat, signal};
 use nix::sys::wait::{self, WaitStatus};
-use nix::sys::stat;
 use nix::unistd::{self, Fork, execvp};
-use nix::{fcntl, NixPath};
+use nix::{self, fcntl, NixPath};
+use signals;
 use std::ffi::CString;
 use std::fmt::Debug;
 use std::io::{self, Write};
 use std::ops::IndexMut;
-use std::{iter, process};
+use std::path::Path;
 use std::result;
+use std::{iter, process};
 use util;
 
 #[derive(Debug)]
@@ -67,28 +69,49 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: Op) -> Result<i32, Stri
     result
 }
 
+pub fn exit(errno: i32) {
+    signals::cleanup_signals();
+    process::exit(errno);
+}
+
 fn wait_for_pid(p: &Process) -> Result<i32, String> {
-    match wait::waitpid(p.pid, None) {
-        Ok(WaitStatus::Exited(_pid, exit_code)) => {
-            if exit_code < 0 {
-                match Errno::from_i32(!exit_code as i32) {
-                    Errno::ENOENT => {
-                        util::write_err(&format!("splash: {}: command not found", p.prog))
+    loop {
+        return match wait::waitpid(p.pid, None) {
+            Ok(WaitStatus::Exited(_pid, exit_code)) => {
+                if exit_code < 0 {
+                    match Errno::from_i32(!exit_code as i32) {
+                        Errno::ENOENT => {
+                            util::write_err(&format!("splash: {}: command not found", p.prog))
+                        }
+                        Errno::EACCES => {
+                            util::write_err(&format!("splash: permission denied: {}", p.prog))
+                        }
+                        Errno::ENOTDIR => {
+                            util::write_err(&format!("splash: not a directory: {}", p.prog))
+                        }
+                        e => util::write_err(&format!("splash: {}: {}", e.desc(), p.prog)),
                     }
-                    Errno::EACCES => {
-                        util::write_err(&format!("splash: permission denied: {}", p.prog))
-                    }
-                    Errno::ENOTDIR => {
-                        util::write_err(&format!("splash: not a directory: {}", p.prog))
-                    }
-                    e => util::write_err(&format!("splash: {}: {}", e.desc(), p.prog)),
+                    Ok(127)
+                } else {
+                    Ok(exit_code as i32)
                 }
-                Ok(127)
-            } else {
-                Ok(exit_code as i32)
             }
-        }
-        e => show_err(e),
+            Err(nix::Error::Sys(nix::Errno::EINTR)) => {
+                let sig = signals::get_last_signal();
+                if sig == libc::SIGTSTP {
+                    println!("splash: backgrounding is not supported, continuing");
+                    signal::kill(p.pid, signal::SIGCONT).unwrap();
+
+                    // Wait for the process again
+                    continue;
+                }
+
+                // Clear this line, otherwise the control character will appear on it
+                println!("");
+                Ok(128 + sig)
+            }
+            e => show_err(e),
+        };
     }
 }
 
@@ -210,7 +233,7 @@ fn fork_builtin(process: &mut Process, cmd: &mut Box<Builtin>) {
     } else {
         if let Err(e) = remap_fds(process) {
             println!("Got error: {}", e);
-            process::exit(1);
+            exit(1);
         }
 
         let result = cmd.run(&process.args[..]);
@@ -222,7 +245,7 @@ fn fork_builtin(process: &mut Process, cmd: &mut Box<Builtin>) {
                 127
             }
         };
-        process::exit(exit_code);
+        exit(exit_code);
     }
 }
 
@@ -236,7 +259,7 @@ fn fork_proc(process: &mut Process) {
     } else {
         if let Err(e) = remap_fds(process) {
             println!("Got error: {}", e);
-            process::exit(1);
+            exit(1);
         }
 
         let args = &iter::once(process.prog.clone())
@@ -248,7 +271,7 @@ fn fork_proc(process: &mut Process) {
 
         // Take bitwise NOT so we can differentiate an internal error
         // from the process legitimately exiting with that status
-        process::exit(!(err.errno() as i8) as i32);
+        exit(!(err.errno() as i8) as i32);
     }
 }
 
