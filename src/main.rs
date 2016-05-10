@@ -1,30 +1,33 @@
-extern crate readline;
 extern crate combine;
 extern crate getopts;
 extern crate nix;
 extern crate libc;
 
-#[cfg(test)]
 #[macro_use]
 extern crate lazy_static;
 
 #[macro_use]
-mod util;
+pub mod util;
 
 #[cfg(test)]
 #[macro_use]
 mod test_fixture;
 
-mod builtin;
-mod env;
-mod interpolate;
-mod lexer;
-mod process;
-mod prompt;
-mod tokenizer;
-mod file;
+pub mod builtin;
+pub mod env;
+pub mod interpolate;
+pub mod lexer;
+pub mod process;
+pub mod prompt;
+pub mod tokenizer;
+pub mod file;
+pub mod signals;
+
+#[allow(dead_code, non_camel_case_types)]
+mod readline;
 
 use getopts::Options;
+use signals::initialize_signals;
 
 fn main() {
     use std::env;
@@ -42,6 +45,7 @@ fn main() {
         return;
     }
 
+    initialize_signals();
     prompt::input_loop();
 }
 

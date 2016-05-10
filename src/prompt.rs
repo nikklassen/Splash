@@ -1,14 +1,16 @@
 use builtin::{self, BuiltinMap};
 use env::UserEnv;
 use lexer::{self, Op};
-use libc::STDIN_FILENO;
-use process;
-use readline::{readline_bare, add_history, Error, ReadlineBytes};
-use std::env;
-use std::ffi::CString;
-use std::io::{self, Write};
+use libc::{self, STDIN_FILENO};
 use nix::unistd::isatty;
-use std::process::exit;
+use process;
+use readline;
+use std::env;
+use std::ffi::{CString, CStr};
+use std::io;
+use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
+use std::sync::Mutex;
+use std::os::raw::c_char;
 use util::write_err;
 
 static WAVE_EMOJI: &'static str = "\u{1F30A}";
@@ -20,14 +22,14 @@ pub fn input_loop() {
     let mut last_status = 0;
     loop {
         let line = getline();
+
         if line.is_none() {
             break;
         }
         let parsed = lexer::parse(&line.unwrap(), &user_env);
 
-        let stderr = io::stderr();
         if let Err(e) = parsed {
-            writeln!(stderr.lock(), "Error: {:?}", e).unwrap();
+            write_err(&format!("splash: {}", e));
             continue;
         }
 
@@ -46,7 +48,7 @@ pub fn input_loop() {
         };
     }
 
-    exit(last_status);
+    process::exit(last_status);
 }
 
 fn getline() -> Option<String> {
@@ -56,17 +58,7 @@ fn getline() -> Option<String> {
         return None;
     }
     if res.unwrap() {
-        let input = readline();
-        match input {
-            Ok(ref l) => {
-                add_history(l);
-                Some(l.to_string_lossy().into_owned())
-            },
-            // ^D
-            Err(_) => {
-                None
-            }
-        }
+        readline_raw()
     } else {
         let mut buf = String::new();
         match io::stdin().read_line(&mut buf) {
@@ -82,9 +74,80 @@ fn getline() -> Option<String> {
     }
 }
 
-fn readline() -> Result<ReadlineBytes, Error> {
-    let prompt = CString::new(get_prompt_string()).unwrap();
-    readline_bare(&prompt)
+static RUNNING: AtomicBool = ATOMIC_BOOL_INIT;
+lazy_static! {
+    static ref CURRENT_LINE: Mutex<Option<String>> = Mutex::new(Some(String::new()));
+}
+
+pub extern "C" fn readline_line_callback(line_raw: *const c_char) {
+    *CURRENT_LINE.lock().unwrap() = if line_raw.is_null() {
+        // ^D
+        println!("exit");
+        None
+    } else {
+        let line_string;
+        unsafe {
+            line_string = CStr::from_ptr(line_raw).to_string_lossy().into_owned();
+        }
+        if line_string == "exit" {
+            None
+        } else {
+            if line_string.len() > 0 {
+                unsafe {
+                    readline::add_history(line_raw);
+                }
+            }
+            Some(line_string)
+        }
+    };
+    /* This function needs to be called to reset the terminal settings,
+       and calling it from the line handler keeps one extra prompt from
+       being displayed. */
+    unsafe {
+        readline::rl_callback_handler_remove();
+    }
+    RUNNING.store(false, Ordering::Relaxed)
+}
+
+fn readline_raw() -> Option<String> {
+    use nix::sys::select;
+
+    unsafe {
+        let prompt = CString::new(get_prompt_string()).unwrap();
+        readline::rl_callback_handler_install(prompt.as_ptr(), readline_line_callback);
+        // Clear any pending writes, potentially due to a process interrupted by a signal
+        libc::fflush(readline::rl_instream);
+    }
+
+    let mut fds = select::FdSet::new();
+    RUNNING.store(true, Ordering::Relaxed);
+    while RUNNING.load(Ordering::Relaxed) {
+        fds.clear();
+
+        unsafe {
+            fds.insert(libc::fileno(readline::rl_instream));
+        }
+
+        let r = select::select(select::FD_SETSIZE, Some(&mut fds), None, None, None);
+        // ^C
+        if r.is_err() {
+            unsafe {
+                readline::rl_callback_handler_remove();
+            }
+            // print a blank line to put the next prompt on the next line
+            println!("");
+
+            // Just return a blank line because this isn't the "exit" case that comes from ^D
+            return Some("".to_string());
+        }
+
+        unsafe {
+            if fds.contains(libc::fileno(readline::rl_instream)) {
+                readline::rl_callback_read_char();
+            }
+        }
+    }
+    (*CURRENT_LINE.lock().unwrap()).clone()
 }
 
 fn get_prompt_string() -> String {

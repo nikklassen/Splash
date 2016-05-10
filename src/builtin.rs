@@ -2,7 +2,6 @@ use std::env;
 use std::io::prelude::*;
 use std::io;
 use std::path::{PathBuf, Component, Path};
-use std::process;
 use getopts::Options;
 use std::collections::HashMap;
 
@@ -76,13 +75,6 @@ impl Builtin for Cd {
     }
 }
 
-struct Exit;
-impl Builtin for Exit {
-    fn run(&mut self, _args: &[String]) -> io::Result<i32> {
-        process::exit(0)
-    }
-}
-
 struct Pwd;
 impl Builtin for Pwd {
     fn run(&mut self, _args: &[String]) -> io::Result<i32> {
@@ -134,7 +126,6 @@ pub fn init_builtins() -> BuiltinMap {
         [
         ("cd", Cd::new()),
         ("echo", Echo),
-        ("exit", Exit),
         ("pwd", Pwd)
         ]);
     builtins
