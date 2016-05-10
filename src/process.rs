@@ -49,7 +49,6 @@ where T: Debug, E: Debug + Clone {
 
 pub fn run_processes(builtins: &mut BuiltinMap, command: Op) -> Result<i32, String> {
     let mut procs = try!(op_to_processes(command).or_else(|e| Err(format!("{}", e))));
-    let mut result = Ok(0);
 
     // TODO all threads need to be spawned then the last waited for
     // the all others subsequently killed if not done
@@ -58,15 +57,13 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: Op) -> Result<i32, Stri
         let builtin_entry = builtins.get_mut(&p.prog);
         if builtin_entry.is_none() {
             fork_proc(p);
-            result = wait_for_pid(&p);
         } else {
             let cmd = builtin_entry.unwrap();
             fork_builtin(p, cmd);
-            result = wait_for_pid(&p);
         }
     }
 
-    result
+    wait_for_pid(procs.last().unwrap())
 }
 
 pub fn exit(errno: i32) {
