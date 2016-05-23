@@ -5,7 +5,7 @@ use env::UserEnv;
 use interpolate;
 use libc::{STDOUT_FILENO, STDIN_FILENO};
 use nix::fcntl::{self, OFlag};
-use tokenizer::{self, AST, RedirOp};
+use tokenizer::{AST, RedirOp};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Redir {
@@ -195,11 +195,7 @@ where I: Stream<Item=AST> {
 }
 
 
-pub fn parse(line: &str, user_env: &UserEnv) -> Result<Option<Op>, String> {
-    let mut tokens: Vec<AST> = try!(tokenizer::tokenize(&line));
-    if tokens.is_empty() {
-        return Ok(None);
-    }
+pub fn parse(mut tokens: Vec<AST>, user_env: &UserEnv) -> Result<Option<Op>, String> {
     tokens = interpolate::expand(tokens, &user_env);
     parser(stmt)
         .parse(primitives::from_iter(tokens.iter().cloned()))
@@ -213,18 +209,13 @@ mod tests {
     use libc::{STDOUT_FILENO, STDIN_FILENO};
     use nix::fcntl;
     use super::*;
-
-    #[test]
-    fn parse_empty() {
-        let user_env = UserEnv::new();
-        let cmd = parse("", &user_env);
-        assert_eq!(cmd, Ok(None));
-    }
+    use tokenizer::tokenize;
 
     #[test]
     fn parse_cmd_no_args() {
         let user_env = UserEnv::new();
-        let cmd = parse("cmd", &user_env).unwrap().unwrap();
+        let input = tokenize("cmd").unwrap();
+        let cmd = parse(input, &user_env).unwrap().unwrap();
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: Vec::new(),
@@ -235,7 +226,8 @@ mod tests {
     #[test]
     fn parse_cmd_multiple_args() {
         let user_env = UserEnv::new();
-        let cmd = parse("cmd arg1 arg2", &user_env).unwrap().unwrap();
+        let input = tokenize("cmd arg1 arg2").unwrap();
+        let cmd = parse(input, &user_env).unwrap().unwrap();
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: vec!["arg1".to_string(), "arg2".to_string()],
@@ -246,7 +238,8 @@ mod tests {
     #[test]
     fn parse_cmd_with_string_arg() {
         let user_env = UserEnv::new();
-        let cmd = parse(r#"cmd "arg1 $VAR arg2""#, &user_env).unwrap().unwrap();
+        let input = tokenize(r#"cmd "arg1 $VAR arg2""#).unwrap();
+        let cmd = parse(input, &user_env).unwrap().unwrap();
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: vec!["arg1  arg2".to_string()],
@@ -257,7 +250,8 @@ mod tests {
     #[test]
     fn parse_cmd_with_connected_args() {
         let user_env = UserEnv::new();
-        let cmd = parse(r#"cmd arg1"arg2 arg3"$TEST'arg4 arg5'"#, &user_env).unwrap().unwrap();
+        let input = tokenize(r#"cmd arg1"arg2 arg3"$TEST'arg4 arg5'"#).unwrap();
+        let cmd = parse(input, &user_env).unwrap().unwrap();
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: vec!["arg1arg2 arg3arg4 arg5".to_string()],
@@ -268,7 +262,8 @@ mod tests {
     #[test]
     fn parse_eql_stmt() {
         let user_env = UserEnv::new();
-        let cmd = parse("FOO=bar", &user_env).unwrap().unwrap();
+        let input = tokenize("FOO=bar").unwrap();
+        let cmd = parse(input, &user_env).unwrap().unwrap();
         assert_eq!(cmd, Op::EqlStmt {
             lhs: "FOO".to_string(),
             rhs: "bar".to_string(),
@@ -278,14 +273,16 @@ mod tests {
     #[test]
     fn parse_eql_trailing_arg_fails() {
         let user_env = UserEnv::new();
-        let cmd = parse("FOO=bar baz", &user_env);
+        let input = tokenize("FOO=bar baz").unwrap();
+        let cmd = parse(input, &user_env);
         assert!(cmd.is_err());
     }
 
     #[test]
     fn parse_pipe() {
         let user_env = UserEnv::new();
-        let cmd = parse("cmd1 | cmd2 arg", &user_env).unwrap().unwrap();
+        let input = tokenize("cmd1 | cmd2 arg").unwrap();
+        let cmd = parse(input, &user_env).unwrap().unwrap();
         assert_eq!(cmd, Op::Pipe {
             cmds: vec![
                 Op::Cmd {
@@ -304,7 +301,8 @@ mod tests {
     #[test]
     fn parse_redir_out() {
         let user_env = UserEnv::new();
-        let cmd = parse("cmd1 > file.txt >> log.txt 2>&1", &user_env).unwrap().unwrap();
+        let input = tokenize("cmd1 > file.txt >> log.txt 2>&1").unwrap();
+        let cmd = parse(input, &user_env).unwrap().unwrap();
         let write_flags = fcntl::O_WRONLY | fcntl::O_CREAT;
         let trunc_flags = write_flags | fcntl::O_TRUNC;
         let append_flags = write_flags | fcntl::O_APPEND;
@@ -322,7 +320,8 @@ mod tests {
     #[test]
     fn parse_redir_in() {
         let user_env = UserEnv::new();
-        let cmd = parse("cmd1 < file.txt <&3", &user_env).unwrap().unwrap();
+        let input = tokenize("cmd1 < file.txt <&3").unwrap();
+        let cmd = parse(input, &user_env).unwrap().unwrap();
         let read_flags = fcntl::O_RDONLY;
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd1".to_string(),
@@ -337,7 +336,8 @@ mod tests {
     #[test]
     fn parse_redir_prefix() {
         let user_env = UserEnv::new();
-        let cmd = parse("> file.txt cmd1", &user_env).unwrap().unwrap();
+        let input = tokenize("> file.txt cmd1").unwrap();
+        let cmd = parse(input, &user_env).unwrap().unwrap();
         let write_flags = fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_TRUNC;
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd1".to_string(),

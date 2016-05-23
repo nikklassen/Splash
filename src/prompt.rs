@@ -11,6 +11,7 @@ use std::io;
 use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
 use std::sync::Mutex;
 use std::os::raw::c_char;
+use tokenizer::{self, AST, ASTError};
 use util::write_err;
 
 static WAVE_EMOJI: &'static str = "\u{1F30A}";
@@ -19,14 +20,34 @@ pub fn input_loop() {
     let mut builtins = builtin::init_builtins();
     let mut user_env = UserEnv::new();
 
+    let mut line = String::new();
     let mut last_status = 0;
     loop {
-        let line = getline();
-
-        if line.is_none() {
+        let cont = !line.is_empty();
+        if let Some(s) = getline(cont) {
+            line.push_str("\n");
+            line.push_str(&s);
+        } else {
             break;
         }
-        let parsed = lexer::parse(&line.unwrap(), &user_env);
+        let tokens: Vec<AST> = match tokenizer::tokenize(&line) {
+            Ok(tokens) => {
+                if tokens.is_empty() {
+                    continue;
+                }
+                tokens
+            },
+            Err(e) => {
+                if e != ASTError::Unterminated {
+                    write_err(&format!("splash: {}", e));
+                    line = String::new();
+                }
+                continue;
+            },
+        };
+        line = String::new();
+
+        let parsed = lexer::parse(tokens, &user_env);
 
         if let Err(e) = parsed {
             write_err(&format!("splash: {}", e));
@@ -51,14 +72,14 @@ pub fn input_loop() {
     process::exit(last_status);
 }
 
-fn getline() -> Option<String> {
+fn getline(cont: bool) -> Option<String> {
     let res = isatty(STDIN_FILENO);
     // If stdin is closed
     if res.is_err() {
         return None;
     }
     if res.unwrap() {
-        readline_raw()
+        readline_raw(cont)
     } else {
         let mut buf = String::new();
         match io::stdin().read_line(&mut buf) {
@@ -109,11 +130,15 @@ pub extern "C" fn readline_line_callback(line_raw: *const c_char) {
     RUNNING.store(false, Ordering::Relaxed)
 }
 
-fn readline_raw() -> Option<String> {
+fn readline_raw(cont: bool) -> Option<String> {
     use nix::sys::select;
 
     unsafe {
-        let prompt = CString::new(get_prompt_string()).unwrap();
+        let prompt = CString::new(if cont {
+            String::from("\\ ")
+        } else {
+            get_prompt_string()
+        }).unwrap();
         readline::rl_callback_handler_install(prompt.as_ptr(), readline_line_callback);
         // Clear any pending writes, potentially due to a process interrupted by a signal
         libc::fflush(readline::rl_instream);

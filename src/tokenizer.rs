@@ -48,7 +48,23 @@ impl Display for AST {
     }
 }
 
-type ASTResult = Result<Option<AST>, String>;
+#[derive(Debug, PartialEq)]
+pub enum ASTError {
+    Unterminated,
+    Unexpected(String),
+}
+
+impl Display for ASTError {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        match self {
+            &ASTError::Unterminated => try!(write!(f, "unterminated string")),
+            &ASTError::Unexpected(ref s) => try!(write!(f, "unexpected input: {}", s)),
+        }
+        Ok(())
+    }
+}
+
+type ASTResult = Result<Option<AST>, ASTError>;
 
 struct CharReader {
     source: Vec<char>,
@@ -186,7 +202,7 @@ fn lit_string_tok(reader: &mut CharReader) -> ASTResult {
             }
             contents.push(c);
         } else {
-            return Err("Unterminated string".to_string());
+            return Err(ASTError::Unterminated);
         }
     }
 }
@@ -212,7 +228,7 @@ fn quotemark_tok(reader: &mut CharReader) -> ASTResult {
         reader.advance();
         Ok(Some(AST::Quoted(tokens)))
     } else {
-        Err("Unterminated string".to_string())
+        Err(ASTError::Unterminated)
     }
 }
 
@@ -276,7 +292,7 @@ fn tokenize_loop<F: Fn(&mut CharReader) -> Option<char>>(
     reader: &mut CharReader,
     tokenizers: Vec<fn(&mut CharReader) -> ASTResult>,
     loop_cond: F)
--> Result<Vec<AST>, String> {
+-> Result<Vec<AST>, ASTError> {
 
     let mut tokens = Vec::<AST>::new();
     let mut word = String::new();
@@ -307,7 +323,7 @@ fn tokenize_loop<F: Fn(&mut CharReader) -> Option<char>>(
     Ok(tokens)
 }
 
-pub fn tokenize(s: &str) -> Result<Vec<AST>, String> {
+pub fn tokenize(s: &str) -> Result<Vec<AST>, ASTError> {
     let mut reader = CharReader::new(s.to_string());
     let tokenizers: Vec<_> = vec!(
         ws_tok as fn(&mut CharReader) -> ASTResult,
