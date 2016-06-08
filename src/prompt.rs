@@ -11,7 +11,7 @@ use std::io;
 use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
 use std::sync::Mutex;
 use std::os::raw::c_char;
-use tokenizer::{self, AST, ASTError};
+use tokenizer::{self, AST, ASTError, RedirOp};
 use util::write_err;
 
 static WAVE_EMOJI: &'static str = "\u{1F30A}";
@@ -24,9 +24,13 @@ pub fn input_loop() {
     let mut last_status = 0;
     loop {
         let cont = !line.is_empty();
-        if let Some(s) = getline(cont) {
-            line.push_str("\n");
+        if let Some(s) = getline(if cont {
+            "\\ ".to_string()
+        } else {
+            get_prompt_string()
+        }) {
             line.push_str(&s);
+            line.push_str("\n");
         } else {
             break;
         }
@@ -47,7 +51,43 @@ pub fn input_loop() {
         };
         line = String::new();
 
-        let parsed = lexer::parse(tokens, &user_env);
+        let mut input: Vec<String> = Vec::new();
+        let mut here_docs: Vec<(RedirOp, String)> = Vec::new();
+        let mut i = 0;
+        while i < tokens.len() {
+            match tokens[i] {
+                AST::Redir(_, ref o@RedirOp::DLESS) | AST::Redir(_, ref o@RedirOp::DLESSDASH) => {
+                    if let AST::String(ref s) = tokens[i+1] {
+                        here_docs.push((o.clone(), s.clone()));
+                    } else {
+                        write_err(&"splash: here docs must be strings".to_string());
+                        continue;
+                    }
+                    i += 2;
+                },
+                _ => {
+                    i += 1;
+                },
+            }
+        }
+        for (kind, here_doc) in here_docs {
+            let mut content = String::new();
+            loop {
+                if let Some(mut s) = getline("\\ ") {
+                    if kind == RedirOp::DLESSDASH {
+                        s = s.chars().skip_while(|c| c.is_whitespace()).collect::<String>();
+                    }
+                    if s == here_doc {
+                        input.push(content);
+                        break;
+                    }
+                    content.push_str(&s);
+                    content.push_str("\n");
+                }
+            }
+        }
+
+        let parsed = lexer::parse(tokens, &user_env, &mut input);
 
         if let Err(e) = parsed {
             write_err(&format!("splash: {}", e));
@@ -72,14 +112,15 @@ pub fn input_loop() {
     process::exit(last_status);
 }
 
-fn getline(cont: bool) -> Option<String> {
+fn getline<T>(prompt: T) -> Option<String>
+where T: Into<String> {
     let res = isatty(STDIN_FILENO);
     // If stdin is closed
     if res.is_err() {
         return None;
     }
     if res.unwrap() {
-        readline_raw(cont)
+        readline_raw(prompt)
     } else {
         let mut buf = String::new();
         match io::stdin().read_line(&mut buf) {
@@ -130,15 +171,12 @@ pub extern "C" fn readline_line_callback(line_raw: *const c_char) {
     RUNNING.store(false, Ordering::Relaxed)
 }
 
-fn readline_raw(cont: bool) -> Option<String> {
+fn readline_raw<T>(prompt: T) -> Option<String>
+where T: Into<String> {
     use nix::sys::select;
 
     unsafe {
-        let prompt = CString::new(if cont {
-            String::from("\\ ")
-        } else {
-            get_prompt_string()
-        }).unwrap();
+        let prompt = CString::new(prompt.into()).unwrap();
         readline::rl_callback_handler_install(prompt.as_ptr(), readline_line_callback);
         // Clear any pending writes, potentially due to a process interrupted by a signal
         libc::fflush(readline::rl_instream);

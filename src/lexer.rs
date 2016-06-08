@@ -11,6 +11,7 @@ use tokenizer::{AST, RedirOp};
 pub enum Redir {
     Copy(i32),
     File(String, OFlag),
+    Temp(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,7 +111,7 @@ fn build_io_redirect((redir, io_file): (AST, AST)) -> (i32, Redir) {
         RedirOp::GREAT | RedirOp::CLOBBER => Redir::File(file_name, fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_TRUNC),
         RedirOp::DGREAT => Redir::File(file_name, fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_APPEND),
         RedirOp::GREATAND => Redir::Copy(file_name.parse::<i32>().unwrap()),
-        _ => unimplemented!(),
+        RedirOp::DLESS | RedirOp::DLESSDASH => Redir::Temp(String::new()),
     })
 }
 
@@ -195,12 +196,39 @@ where I: Stream<Item=AST> {
 }
 
 
-pub fn parse(mut tokens: Vec<AST>, user_env: &UserEnv) -> Result<Option<Op>, String> {
+pub fn parse(mut tokens: Vec<AST>, user_env: &UserEnv, heredocs: &mut Vec<String>) -> Result<Option<Op>, String> {
     tokens = interpolate::expand(tokens, &user_env);
-    parser(stmt)
+    let result = try!(parser(stmt)
         .parse(primitives::from_iter(tokens.iter().cloned()))
         .map(|r| Some(r.0))
-        .or_else(|e| Err(format!("{:?}", e.errors)))
+        .or_else(|e| Err(format!("{:?}", e.errors))));
+
+    fn populate_heredocs(cmd: &mut Op, heredocs: &mut Vec<String>) {
+        match cmd {
+            &mut Op::Pipe { ref mut cmds } => {
+                for mut c in cmds.iter_mut() {
+                    populate_heredocs(&mut c, heredocs);
+                }
+            },
+            &mut Op::Cmd { ref mut io, .. } => {
+                for ios in io.iter_mut() {
+                    if let &mut (_, Redir::Temp(ref mut contents)) = ios {
+                        if let Some(hd) = heredocs.pop() {
+                            *contents = hd;
+                        } else {
+                            unreachable!("Not enough heredocs were specified");
+                        }
+                    }
+                }
+            },
+            _ => {},
+        }
+    }
+
+    Ok(result.map(|mut r| {
+        populate_heredocs(&mut r, heredocs);
+        r
+    }))
 }
 
 #[cfg(test)]
@@ -215,7 +243,7 @@ mod tests {
     fn parse_cmd_no_args() {
         let user_env = UserEnv::new();
         let input = tokenize("cmd").unwrap();
-        let cmd = parse(input, &user_env).unwrap().unwrap();
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: Vec::new(),
@@ -227,7 +255,7 @@ mod tests {
     fn parse_cmd_multiple_args() {
         let user_env = UserEnv::new();
         let input = tokenize("cmd arg1 arg2").unwrap();
-        let cmd = parse(input, &user_env).unwrap().unwrap();
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: vec!["arg1".to_string(), "arg2".to_string()],
@@ -239,7 +267,7 @@ mod tests {
     fn parse_cmd_with_string_arg() {
         let user_env = UserEnv::new();
         let input = tokenize(r#"cmd "arg1 $VAR arg2""#).unwrap();
-        let cmd = parse(input, &user_env).unwrap().unwrap();
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: vec!["arg1  arg2".to_string()],
@@ -251,7 +279,7 @@ mod tests {
     fn parse_cmd_with_connected_args() {
         let user_env = UserEnv::new();
         let input = tokenize(r#"cmd arg1"arg2 arg3"$TEST'arg4 arg5'"#).unwrap();
-        let cmd = parse(input, &user_env).unwrap().unwrap();
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd".to_string(),
             args: vec!["arg1arg2 arg3arg4 arg5".to_string()],
@@ -263,7 +291,7 @@ mod tests {
     fn parse_eql_stmt() {
         let user_env = UserEnv::new();
         let input = tokenize("FOO=bar").unwrap();
-        let cmd = parse(input, &user_env).unwrap().unwrap();
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
         assert_eq!(cmd, Op::EqlStmt {
             lhs: "FOO".to_string(),
             rhs: "bar".to_string(),
@@ -274,7 +302,7 @@ mod tests {
     fn parse_eql_trailing_arg_fails() {
         let user_env = UserEnv::new();
         let input = tokenize("FOO=bar baz").unwrap();
-        let cmd = parse(input, &user_env);
+        let cmd = parse(input, &user_env, &mut vec![]);
         assert!(cmd.is_err());
     }
 
@@ -282,7 +310,7 @@ mod tests {
     fn parse_pipe() {
         let user_env = UserEnv::new();
         let input = tokenize("cmd1 | cmd2 arg").unwrap();
-        let cmd = parse(input, &user_env).unwrap().unwrap();
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
         assert_eq!(cmd, Op::Pipe {
             cmds: vec![
                 Op::Cmd {
@@ -302,7 +330,7 @@ mod tests {
     fn parse_redir_out() {
         let user_env = UserEnv::new();
         let input = tokenize("cmd1 > file.txt >> log.txt 2>&1").unwrap();
-        let cmd = parse(input, &user_env).unwrap().unwrap();
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
         let write_flags = fcntl::O_WRONLY | fcntl::O_CREAT;
         let trunc_flags = write_flags | fcntl::O_TRUNC;
         let append_flags = write_flags | fcntl::O_APPEND;
@@ -321,7 +349,7 @@ mod tests {
     fn parse_redir_in() {
         let user_env = UserEnv::new();
         let input = tokenize("cmd1 < file.txt <&3").unwrap();
-        let cmd = parse(input, &user_env).unwrap().unwrap();
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
         let read_flags = fcntl::O_RDONLY;
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd1".to_string(),
@@ -337,13 +365,28 @@ mod tests {
     fn parse_redir_prefix() {
         let user_env = UserEnv::new();
         let input = tokenize("> file.txt cmd1").unwrap();
-        let cmd = parse(input, &user_env).unwrap().unwrap();
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
         let write_flags = fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_TRUNC;
         assert_eq!(cmd, Op::Cmd {
             prog: "cmd1".to_string(),
             args: Vec::new(),
             io: vec![
                 (STDOUT_FILENO, Redir::File("file.txt".to_string(), write_flags)),
+            ],
+        })
+    }
+
+    #[test]
+    fn populate_heredocs() {
+        let user_env = UserEnv::new();
+        let input = tokenize("cmd <<EOF").unwrap();
+        let contents: String = "contents".into();
+        let cmd = parse(input, &user_env, &mut vec![contents.clone()]).unwrap().unwrap();
+        assert_eq!(cmd, Op::Cmd {
+            prog: "cmd".into(),
+            args: Vec::new(),
+            io: vec![
+                (STDIN_FILENO, Redir::Temp(contents)),
             ],
         })
     }

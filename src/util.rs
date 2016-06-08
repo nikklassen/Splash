@@ -1,5 +1,6 @@
 use std::io::{self, Write};
-use std::fmt::Display;
+use std::fmt::{Display, Debug};
+use std::result;
 
 #[export_macro]
 macro_rules! is_match {
@@ -21,6 +22,16 @@ macro_rules! hash_map(
         }
      };
 );
+
+pub fn sequence<T, E>(v: Vec<Result<T, E>>) -> result::Result<Vec<T>, E>
+where T: Debug, E: Debug + Clone {
+    for res in v.iter() {
+        if let &Err(ref e) = res {
+            return Err(e.clone());
+        }
+    }
+    Ok(v.into_iter().map(|i| i.unwrap()).collect())
+}
 
 #[inline]
 pub fn write_err<D: Display>(s: &D) {

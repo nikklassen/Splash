@@ -2,6 +2,7 @@ extern crate combine;
 extern crate getopts;
 extern crate nix;
 extern crate libc;
+extern crate tempfile;
 
 #[macro_use]
 extern crate lazy_static;

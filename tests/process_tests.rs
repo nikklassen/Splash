@@ -22,10 +22,10 @@ fn set_env(cmd: &mut Command) -> &mut Command {
     cmd.env("PATH", format!("/bin:/usr/bin:{}", build_dir))
 }
 
-fn run_in_splash<S: Into<String>>(shell_cmd: S) -> (i32, String) {
+fn run_in_splash(shell_cmd: &str) -> (i32, String) {
     let mut cmd = Command::new("sh");
     let _ = cmd.arg("-c")
-        .arg(format!("echo \"{}\" | splash", shell_cmd.into()));
+        .arg(format!("echo \"{}\" | splash", shell_cmd));
 
     set_env(&mut cmd);
 
@@ -40,66 +40,66 @@ fn run_in_splash<S: Into<String>>(shell_cmd: S) -> (i32, String) {
 fn run_builtin() {
     let (ecode, output) = run_in_splash("echo hello");
     assert_eq!(ecode, 0);
-    assert_eq!(output, String::from("hello\n"));
+    assert_eq!(output, "hello\n");
 }
 
 #[test]
 fn run_external() {
     let (ecode, output) = run_in_splash("expr 1 + 1");
     assert_eq!(ecode, 0);
-    assert_eq!(output, String::from("2\n"));
+    assert_eq!(output, "2\n");
 }
 
 #[test]
 fn pipe_from_builtin_to_ext() {
     let (ecode, output) = run_in_splash("echo hello | sed 's/$/ world/'");
     assert_eq!(ecode, 0);
-    assert_eq!(output, String::from("hello world\n"));
+    assert_eq!(output, "hello world\n");
 }
 
 #[test]
 fn pipe_from_ext_to_ext() {
     let (ecode, output) = run_in_splash("expr 1 + 1 | sed 's/.*/& &/'");
     assert_eq!(ecode, 0);
-    assert_eq!(output, String::from("2 2\n"));
+    assert_eq!(output, "2 2\n");
 }
 
 #[test]
 fn pipe_from_ext_to_builtin() {
     let (ecode, output) = run_in_splash("expr 1 + 1 | echo 'hello world'");
     assert_eq!(ecode, 0);
-    assert_eq!(output, String::from("hello world\n"));
+    assert_eq!(output, "hello world\n");
 }
 
 #[test]
 fn continue_pipe_with_failure() {
     let (ecode, output) = run_in_splash("not_a_program | echo hello");
     assert_eq!(ecode, 0);
-    assert_eq!(output, String::from("hello\n"));
+    assert_eq!(output, "hello\n");
 }
 
 #[test]
 fn continue_pipe_with_exit_nonzero() {
     let (ecode, output) = run_in_splash("false | echo hello");
     assert_eq!(ecode, 0);
-    assert_eq!(output, String::from("hello\n"));
+    assert_eq!(output, "hello\n");
 }
 
 #[test]
 fn command_not_found() {
     let (ecode, output) = run_in_splash("not_a_program");
     assert_eq!(ecode, 127);
-    assert_eq!(output, String::from(""));
+    assert_eq!(output, "");
 }
 
 #[test]
 fn redirect_out() {
     let mut f = NamedTempFile::new().unwrap();
 
-    let (ecode, output) = run_in_splash(format!("echo 'foo' > {}", f.path().display()));
+    let (ecode, output) = run_in_splash(&format!("echo 'foo' > {}", f.path().display()));
 
     assert_eq!(ecode, 0);
-    assert_eq!(output, String::from(""));
+    assert_eq!(output, "");
 
     let mut contents = String::new();
     f.read_to_string(&mut contents).unwrap();
@@ -112,10 +112,10 @@ fn redirect_in() {
     f.write(b"hello\n").unwrap();
     f.flush().unwrap();
 
-    let (ecode, output) = run_in_splash(format!("cat < {}", f.path().display()));
+    let (ecode, output) = run_in_splash(&format!("cat < {}", f.path().display()));
 
     assert_eq!(ecode, 0);
-    assert_eq!(output, String::from("hello\n"));
+    assert_eq!(output, "hello\n");
 }
 
 #[test]
@@ -124,9 +124,9 @@ fn redirect_overrides_pipe() {
     f.write(b"hello\n").unwrap();
     f.flush().unwrap();
 
-    let (ecode, output) = run_in_splash(format!("echo 'hi' | cat < {}", f.path().display()));
+    let (ecode, output) = run_in_splash(&format!("echo 'hi' | cat < {}", f.path().display()));
 
-    assert_eq!(output, String::from("hello\n"));
+    assert_eq!(output, "hello\n");
     assert_eq!(ecode, 0);
 }
 
@@ -136,9 +136,9 @@ fn redirect_in_other_fd() {
     f.write(b"hello\n").unwrap();
     f.flush().unwrap();
 
-    let (ecode, output) = run_in_splash(format!("cat /dev/fd/3 3< {}", f.path().display()));
+    let (ecode, output) = run_in_splash(&format!("cat /dev/fd/3 3< {}", f.path().display()));
 
-    assert_eq!(output, String::from("hello\n"));
+    assert_eq!(output, "hello\n");
     assert_eq!(ecode, 0);
 }
 
@@ -146,14 +146,30 @@ fn redirect_in_other_fd() {
 fn redirect_out_other_fd() {
     let mut f = NamedTempFile::new().unwrap();
 
-    let (ecode, output) = run_in_splash(format!("echo 'hello' | cat 3> {} >&3", f.path().display()));
+    let (ecode, output) = run_in_splash(&format!("echo 'hello' | cat 3> {} >&3", f.path().display()));
 
-    assert_eq!(output, String::new());
+    assert_eq!(output, "");
     assert_eq!(ecode, 0);
 
     let mut contents = String::new();
     f.read_to_string(&mut contents).unwrap();
     assert_eq!(contents, "hello\n");
+}
+
+#[test]
+fn heredoc_in() {
+    let (ecode, output) = run_in_splash(&"cat <<EOF\nabc\nEOF");
+
+    assert_eq!(output, "abc\n");
+    assert_eq!(ecode, 0);
+}
+
+#[test]
+fn heredoc_in_no_whitespace() {
+    let (ecode, output) = run_in_splash(&"cat <<-EOF\n   abc\n  EOF");
+
+    assert_eq!(output, "abc\n");
+    assert_eq!(ecode, 0);
 }
 
 #[test]

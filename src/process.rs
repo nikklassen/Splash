@@ -11,11 +11,12 @@ use nix::{self, fcntl, NixPath};
 use signals;
 use std::ffi::CString;
 use std::fmt::Debug;
-use std::io::{self, Write};
+use std::os::unix::io::IntoRawFd;
+use std::io::{self, Write, Seek, SeekFrom};
 use std::ops::IndexMut;
 use std::path::Path;
-use std::result;
 use std::{iter, process};
+use tempfile::tempfile;
 use util;
 
 #[derive(Debug)]
@@ -35,16 +36,6 @@ impl Process {
             io: Vec::new(),
         }
     }
-}
-
-fn sequence<T, E>(v: Vec<Result<T, E>>) -> result::Result<Vec<T>, E>
-where T: Debug, E: Debug + Clone {
-    for res in v.iter() {
-        if let &Err(ref e) = res {
-            return Err(e.clone());
-        }
-    }
-    Ok(v.into_iter().map(|i| i.unwrap()).collect())
 }
 
 pub fn run_processes(builtins: &mut BuiltinMap, command: Op) -> Result<i32, String> {
@@ -128,6 +119,13 @@ fn add_redirects_to_io(io: &mut Vec<(i32, Fd)>, redirects: &Vec<(i32, Redir)>) -
                 Fd::new(file)
             },
             &Redir::Copy(n) => try!(Fd::dup(n)),
+            &Redir::Temp(ref contents) => {
+                let mut tmpfile = try!(tempfile()
+                    .or(Err("Could not create temporary file".to_string())));
+                try!(tmpfile.write_all(contents.as_bytes()).or_else(show_err));
+                try!(tmpfile.seek(SeekFrom::Start(0)).or_else(show_err));
+                Fd::new(tmpfile.into_raw_fd())
+            },
         };
         io.push((*io_number, fd));
     }
@@ -154,7 +152,7 @@ fn op_to_processes(op: Op) -> Result<Vec<Process>, String> {
             Ok(vec![p])
         }
         Op::Pipe { cmds } => {
-            let mut procs: Vec<Process> = try!(sequence(cmds
+            let mut procs: Vec<Process> = try!(util::sequence(cmds
                 .into_iter()
                 .map(|cmd| {
                     match cmd {
