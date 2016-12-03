@@ -18,6 +18,6 @@ debug = true
 combine = "^1.2"
 getopts = "^0.2"
 lazy_static = "^0.1.15"
-libc = "^0.2.8"
-nix = "^0.5.0"
+libc = { git = "https://github.com/rust-lang/libc" }
+nix = "^0.7.0"
 tempfile = "2.1.1"

@@ -1,17 +1,13 @@
+use std::collections::HashMap;
+use process::{self, JobTable, Builtin, BuiltinMap};
+use getopts::Options;
 use std::env;
 use std::io::prelude::*;
 use std::io;
 use std::path::{PathBuf, Component, Path};
-use getopts::Options;
-use std::collections::HashMap;
+use util::write_err;
 
 const SUCCESS: io::Result<i32> = Ok(0);
-
-pub trait Builtin {
-    fn run(&mut self, args: &[String]) -> io::Result<i32>;
-}
-
-pub type BuiltinMap = HashMap<String, Box<Builtin>>;
 
 struct Cd {
     prev_dir: String,
@@ -110,6 +106,55 @@ impl Builtin for Echo {
     }
 }
 
+struct Fg {
+    jobs: JobTable,
+}
+impl Fg {
+    pub fn new(jobs: JobTable) -> Self {
+        Fg {
+            jobs: jobs,
+        }
+    }
+}
+
+impl Builtin for Fg {
+    fn run(&mut self, _args: &[String]) -> io::Result<i32> {
+        let jobs = self.jobs.borrow_mut();
+        if let Some((ref n, ref job)) = jobs.iter().next() {
+            println!("[{}]  + continued", n);
+            if let Err(e) = process::put_job_in_foreground(job, true, &self.jobs.clone()) {
+                write_err(&format!("splash: {}", e));
+                Ok(2)
+            } else {
+                Ok(0)
+            }
+        } else {
+            println!("fg: no current job");
+            Ok(1)
+        }
+    }
+}
+
+struct Jobs {
+    jobs: JobTable,
+}
+impl Jobs {
+    pub fn new(jobs: JobTable) -> Self {
+        Jobs {
+            jobs: jobs,
+        }
+    }
+}
+
+impl Builtin for Jobs {
+    fn run(&mut self, _args: &[String]) -> io::Result<i32> {
+        for (n, job) in self.jobs.borrow().iter() {
+            println!("[{}]  + {}", n, job.prog);
+        }
+        Ok(0)
+    }
+}
+
 macro_rules! add_builtins {
     ($map:ident, [ $( ($n:expr, $cmd:expr) ),* ] ) => {{
         $($map.insert(
@@ -119,14 +164,16 @@ macro_rules! add_builtins {
     }}
 }
 
-pub fn init_builtins() -> BuiltinMap {
+pub fn init_builtins(jobs: JobTable) -> BuiltinMap {
     let mut builtins = HashMap::new();
     add_builtins!(
         builtins,
         [
         ("cd", Cd::new()),
         ("echo", Echo),
-        ("pwd", Pwd)
+        ("pwd", Pwd),
+        ("fg", Fg::new(jobs.clone())),
+        ("jobs", Jobs::new(jobs.clone()))
         ]);
     builtins
 }
@@ -135,7 +182,8 @@ pub fn init_builtins() -> BuiltinMap {
 mod tests {
     use std::{env, fs};
     use std::path::PathBuf;
-    use super::{Cd, Builtin};
+    use super::Cd;
+    use process::Builtin;
     use test_fixture::*;
 
     struct BuiltinTests {

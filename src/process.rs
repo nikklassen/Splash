@@ -1,27 +1,60 @@
-use builtin::{BuiltinMap, Builtin};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::ffi::CString;
+use std::io::{self, Write, Seek, SeekFrom, Error};
+use std::ops::IndexMut;
+use std::os::unix::io::IntoRawFd;
+use std::path::Path;
+use std::rc::Rc;
+use std::{iter, process};
+
+use libc::{STDOUT_FILENO, STDIN_FILENO};
+use nix::errno::Errno;
+use nix::sys::wait::{self, WaitStatus};
+use nix::sys::{stat, signal};
+use nix::unistd::{self, ForkResult, execvp, getpid, setpgid, isatty};
+use nix::{self, fcntl};
+use tempfile::tempfile;
+
+use bindings::nix::{tcsetpgrp, getpgrp};
 use file::Fd;
 use lexer::{Op, Redir};
-use libc::{STDOUT_FILENO, STDIN_FILENO};
-use libc;
-use nix::errno::Errno;
-use nix::sys::{stat, signal};
-use nix::sys::wait::{self, WaitStatus};
-use nix::unistd::{self, Fork, execvp};
-use nix::{self, fcntl, NixPath};
 use signals;
-use std::ffi::CString;
-use std::fmt::Debug;
-use std::os::unix::io::IntoRawFd;
-use std::io::{self, Write, Seek, SeekFrom};
-use std::ops::IndexMut;
-use std::path::Path;
-use std::{iter, process};
-use tempfile::tempfile;
 use util;
+
+#[derive(Debug, Clone)]
+pub struct Job {
+    pub pid: i32,
+    pub pgid: i32,
+    pub prog: String,
+    // TODO this should be set from the original user input
+    pub cmd: String,
+}
+
+impl Job {
+    pub fn new(p: &Process) -> Self {
+        let mut cmd = String::from(p.prog.as_str());
+        cmd.push_str(" ");
+        cmd.push_str(&p.args.join(" "));
+        Job {
+            pid: p.pid,
+            pgid: p.pgid,
+            prog: p.prog.clone(),
+            cmd: cmd,
+        }
+    }
+}
+
+pub type JobTable = Rc<RefCell<HashMap<i32, Job>>>;
+
+pub fn new_joblist() -> JobTable {
+    Rc::new(RefCell::new(HashMap::new()))
+}
 
 #[derive(Debug)]
 pub struct Process {
     pub pid: i32,
+    pub pgid: i32,
     pub prog: String,
     pub args: Vec<String>,
     pub io: Vec<(i32, Fd)>,
@@ -31,6 +64,7 @@ impl Process {
     pub fn new(prog: String, args: Vec<String>) -> Process {
         Process {
             pid: 0,
+            pgid: 0,
             prog: prog,
             args: args,
             io: Vec::new(),
@@ -38,69 +72,42 @@ impl Process {
     }
 }
 
-pub fn run_processes(builtins: &mut BuiltinMap, command: Op) -> Result<i32, String> {
+pub trait Builtin {
+    fn run(&mut self, args: &[String]) -> io::Result<i32>;
+}
+
+pub type BuiltinMap = HashMap<String, Box<Builtin>>;
+
+pub fn run_processes(builtins: &mut BuiltinMap, command: Op, jobs: &JobTable) -> Result<i32, String> {
     let mut procs = try!(op_to_processes(command).or_else(|e| Err(format!("{}", e))));
+    let mut pgid = 0;
 
     // TODO all threads need to be spawned then the last waited for
     // the all others subsequently killed if not done
     for p in procs.iter_mut() {
-
         let builtin_entry = builtins.get_mut(&p.prog);
-        if builtin_entry.is_none() {
-            fork_proc(p);
+        if let Some(cmd) = builtin_entry {
+            exec_builtin(p, cmd, pgid, true);
         } else {
-            let cmd = builtin_entry.unwrap();
-            fork_builtin(p, cmd);
+            fork_proc(p, pgid, true);
+            pgid = p.pgid;
         }
     }
 
-    wait_for_pid(procs.last().unwrap())
+    let last_proc = procs.last().unwrap();
+    let job = Job::new(&last_proc);
+    if job.pid == getpid() {
+        Ok(0)
+    } else if !is_interactive() {
+        wait_for_pid(&job, jobs)
+    } else {
+        put_job_in_foreground(&job, false, &jobs)
+    }
 }
 
 pub fn exit(errno: i32) {
     signals::cleanup_signals();
     process::exit(errno);
-}
-
-fn wait_for_pid(p: &Process) -> Result<i32, String> {
-    loop {
-        return match wait::waitpid(p.pid, None) {
-            Ok(WaitStatus::Exited(_pid, exit_code)) => {
-                if exit_code < 0 {
-                    match Errno::from_i32(!exit_code as i32) {
-                        Errno::ENOENT => {
-                            util::write_err(&format!("splash: {}: command not found", p.prog))
-                        }
-                        Errno::EACCES => {
-                            util::write_err(&format!("splash: permission denied: {}", p.prog))
-                        }
-                        Errno::ENOTDIR => {
-                            util::write_err(&format!("splash: not a directory: {}", p.prog))
-                        }
-                        e => util::write_err(&format!("splash: {}: {}", e.desc(), p.prog)),
-                    }
-                    Ok(127)
-                } else {
-                    Ok(exit_code as i32)
-                }
-            }
-            Err(nix::Error::Sys(nix::Errno::EINTR)) => {
-                let sig = signals::get_last_signal();
-                if sig == libc::SIGTSTP {
-                    println!("splash: backgrounding is not supported, continuing");
-                    signal::kill(p.pid, signal::SIGCONT).unwrap();
-
-                    // Wait for the process again
-                    continue;
-                }
-
-                // Clear this line, otherwise the control character will appear on it
-                println!("");
-                Ok(128 + sig)
-            }
-            e => show_err(e),
-        };
-    }
 }
 
 macro_rules! str_vec {
@@ -115,15 +122,15 @@ fn add_redirects_to_io(io: &mut Vec<(i32, Fd)>, redirects: &Vec<(i32, Redir)>) -
             &Redir::File(ref name, ref flags) => {
                 let mode = stat::S_IRUSR | stat::S_IWUSR | stat::S_IRGRP | stat::S_IROTH;
                 let path = Path::new(name);
-                let file = try!(fcntl::open(path, *flags, mode).or_else(show_err));
+                let file = try!(fcntl::open(path, *flags, mode).or_else(util::show_err));
                 Fd::new(file)
             },
             &Redir::Copy(n) => try!(Fd::dup(n)),
             &Redir::Temp(ref contents) => {
                 let mut tmpfile = try!(tempfile()
                     .or(Err("Could not create temporary file".to_string())));
-                try!(tmpfile.write_all(contents.as_bytes()).or_else(show_err));
-                try!(tmpfile.seek(SeekFrom::Start(0)).or_else(show_err));
+                try!(tmpfile.write_all(contents.as_bytes()).or_else(util::show_err));
+                try!(tmpfile.seek(SeekFrom::Start(0)).or_else(util::show_err));
                 Fd::new(tmpfile.into_raw_fd())
             },
         };
@@ -218,10 +225,19 @@ fn remap_fds(process: &mut Process) -> Result<(), String> {
     Ok(())
 }
 
-fn fork_builtin(process: &mut Process, cmd: &mut Box<Builtin>) {
+fn fork_process<F>(process: &mut Process, mut pgid: i32, cmd: F, foreground: bool)
+where F: FnOnce() -> Result<i32, Error> {
     let f = unistd::fork().unwrap();
-    if let Fork::Parent(pid) = f {
-        process.pid = pid;
+    if let ForkResult::Parent { child } = f {
+        process.pid = child;
+        if is_interactive() {
+            if pgid == 0 {
+                pgid = child;
+            }
+            setpgid(child, pgid).unwrap();
+            process.pgid = pgid;
+        }
+
         for &mut (_io_number, ref mut fd) in process.io.iter_mut() {
             fd.close();
         }
@@ -231,7 +247,22 @@ fn fork_builtin(process: &mut Process, cmd: &mut Box<Builtin>) {
             exit(1);
         }
 
-        let result = cmd.run(&process.args[..]);
+        if is_interactive() {
+            let pid = getpid();
+            if pgid == 0 {
+                pgid = pid;
+            }
+            setpgid(pid, pgid).unwrap();
+            if foreground {
+                tcsetpgrp(STDIN_FILENO, pgid).unwrap();
+            }
+
+            // Reset signals
+            signals::cleanup_signals();
+        }
+
+        let result = cmd();
+
         let exit_code = match result {
             Ok(ecode) => ecode,
             Err(e) => {
@@ -240,36 +271,132 @@ fn fork_builtin(process: &mut Process, cmd: &mut Box<Builtin>) {
                 127
             }
         };
+
         exit(exit_code);
     }
 }
 
-fn fork_proc(process: &mut Process) {
-    let f = unistd::fork().unwrap();
-    if let Fork::Parent(pid) = f {
-        process.pid = pid;
-        for &mut (_io_number, ref mut fd) in process.io.iter_mut() {
-            fd.close();
-        }
-    } else {
+fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: i32, foreground: bool) {
+    let args: Vec<String> = process.args[..].iter().cloned().collect();
+    let has_output = process.io.iter().find(|io_item| io_item.0 == STDOUT_FILENO).is_some();
+    if foreground && !has_output {
         if let Err(e) = remap_fds(process) {
             println!("Got error: {}", e);
-            exit(1);
+            return;
         }
-
-        let args = &iter::once(process.prog.clone())
-            .chain(process.args.iter().cloned())
-            .map(|s| CString::new(s.as_bytes()).unwrap())
-            .collect::<Vec<_>>()[..];
-
-        let err = execvp(&CString::new(process.prog.as_bytes()).unwrap(), args).unwrap_err();
-
-        // Take bitwise NOT so we can differentiate an internal error
-        // from the process legitimately exiting with that status
-        exit(!(err.errno() as i8) as i32);
+        process.pid = getpid();
+        let _ = cmd.run(&args[..]);
+    } else {
+        fork_process(process, pgid, || {
+            cmd.run(&args[..])
+        }, foreground);
     }
 }
 
-fn show_err<S, T: Debug>(e: T) -> Result<S, String> {
-    Err(format!("{:?}", e))
+fn fork_proc(process: &mut Process, pgid: i32, foreground: bool) {
+    let prog = process.prog.clone();
+    let args: Vec<String> = process.args.iter().cloned().collect();
+    fork_process(process, pgid, move || {
+        let args = &iter::once(&prog)
+            .chain(args.iter())
+            .map(|s| CString::new(s.as_bytes()).unwrap())
+            .collect::<Vec<_>>()[..];
+
+        let err = execvp(&CString::new(prog.as_bytes()).unwrap(), args).unwrap_err();
+
+        // Take bitwise NOT so we can differentiate an internal error
+        // from the process legitimately exiting with that status
+        Ok(!(err.errno() as i8) as i32)
+    }, foreground);
 }
+
+pub fn put_job_in_foreground(j: &Job, cont: bool, jobs: &JobTable)
+-> Result<i32, String> {
+    let shell_pgid = try!(getpgrp().or_else(util::show_err));
+    try!(tcsetpgrp(STDIN_FILENO, j.pgid).or_else(util::show_err));
+
+    if cont {
+        try!(signal::kill(j.pgid, signal::SIGCONT).or(Err("Failed to continue job")));
+    }
+
+    let res = try!(wait_for_pid(j, jobs).or(Err("Failed to wait for proc")));
+    try!(tcsetpgrp(STDIN_FILENO, shell_pgid).or(Err("Failed to set shell pgid")));
+
+    Ok(res)
+}
+
+pub fn wait_for_pid(job: &Job, jobs: &JobTable) -> Result<i32, String> {
+    loop {
+        match wait::waitpid(job.pid, Some(wait::WUNTRACED)) {
+            Ok(WaitStatus::Exited(_pid, exit_code)) => {
+                return if exit_code < 0 {
+                    match Errno::from_i32(!exit_code as i32) {
+                        Errno::ENOENT => {
+                            util::write_err(&format!("splash: {}: command not found", job.prog))
+                        }
+                        Errno::EACCES => {
+                            util::write_err(&format!("splash: permission denied: {}", job.prog))
+                        }
+                        Errno::ENOTDIR => {
+                            util::write_err(&format!("splash: not a directory: {}", job.prog))
+                        }
+                        e => util::write_err(&format!("splash: {}: {}", e.desc(), job.prog)),
+                    }
+                    Ok(127)
+                } else {
+                    Ok(exit_code as i32)
+                };
+            }
+            Ok(WaitStatus::Signaled(_pid, sig, _)) => {
+                return Ok(128 + (sig as i32));
+            }
+            Ok(WaitStatus::Stopped(_pid, _sig)) => {
+                let mut job_map = jobs.borrow_mut();
+                let mut i = 1;
+                // Find the first available job number (job table may have "holes")
+                loop {
+                    if !job_map.contains_key(&i) {
+                        job_map.insert(i, job.clone());
+                        break;
+                    }
+                    i += 1;
+                }
+                // TODO process name
+                println!("splash: suspended\t{}", job.cmd);
+
+                return Ok(0);
+            }
+            Err(nix::Error::Sys(nix::Errno::ECHILD)) => {
+                println!("No child to wait for");
+                return Ok(0);
+            }
+            Err(nix::Error::Sys(nix::Errno::EINTR)) => {
+                // This will be executed if the terminal receives a signal while waiting, assume it was SIGCHLD for now and get information about the last processes
+                match wait::waitpid(job.pid, Some(wait::WUNTRACED | wait::WNOHANG)) {
+                    Ok(WaitStatus::Signaled(_pid, sig, false)) => {
+                        return Ok(128 + (sig as i32));
+                    }
+                    Ok(WaitStatus::StillAlive) => {
+                        // no-op
+                    }
+                    Ok(WaitStatus::Exited(_pid, status)) => {
+                        return Ok(status as i32);
+                    }
+                    // Something else interrupted the system call, try again
+                    e => {
+                        println!("Waiting for process interupted, process status is {:?}", e);
+                    }
+                }
+            }
+            e => {
+                println!("Other error");
+                return util::show_err(e);
+            }
+        }
+    }
+}
+
+fn is_interactive() -> bool {
+    isatty(STDIN_FILENO).unwrap_or(false)
+}
+

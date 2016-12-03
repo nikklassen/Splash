@@ -5,16 +5,22 @@ use std::sync::atomic::{AtomicIsize, Ordering, ATOMIC_ISIZE_INIT};
 
 pub static LAST_SIGNAL: AtomicIsize = ATOMIC_ISIZE_INIT;
 
-static SIGNALS: [i32; 2] = [
+const SIGNALS: [signal::Signal; 3] = [
     signal::SIGINT,
-    signal::SIGTSTP
+    signal::SIGQUIT,
+    signal::SIGTSTP,
+];
+
+static IGNORE_SIGNALS: [signal::Signal; 2] = [
+    signal::SIGTTIN,
+    signal::SIGTTOU,
 ];
 
 /// Initialize all signal handlers
 pub fn initialize_signals() {
-    let sig_action = signal::SigAction::new(
+    let mut sig_action = signal::SigAction::new(
         signal::SigHandler::Handler(handle_signal),
-        signal::SaFlag::empty(),
+        signal::SaFlags::empty(),
         signal::SigSet::all());
     for signal in SIGNALS.iter() {
         unsafe {
@@ -23,15 +29,37 @@ pub fn initialize_signals() {
             }
         }
     }
+
+    sig_action = signal::SigAction::new(
+        signal::SigHandler::SigIgn,
+        signal::SaFlags::empty(),
+        signal::SigSet::all());
+    for signal in IGNORE_SIGNALS.iter() {
+        unsafe {
+            if let Err(res) = signal::sigaction(*signal, &sig_action) {
+                println!("Error initializing signal handling: {:?}", res);
+            }
+        }
+    }
+
+    sig_action = signal::SigAction::new(
+        signal::SigHandler::Handler(handle_signal),
+        signal::SA_NOCLDSTOP,
+        signal::SigSet::all());
+    unsafe {
+        if let Err(res) = signal::sigaction(signal::SIGCHLD, &sig_action) {
+            println!("Error initializing signal handling: {:?}", res);
+        }
+    }
 }
 
 /// Remove any signal handlers created by splash, setting them to SIG_DFL
 pub fn cleanup_signals() {
     let sig_action = signal::SigAction::new(
         signal::SigHandler::SigDfl,
-        signal::SaFlag::empty(),
+        signal::SaFlags::empty(),
         signal::SigSet::all());
-    for signal in SIGNALS.iter() {
+    for signal in SIGNALS.iter().chain(IGNORE_SIGNALS.iter()) {
         unsafe {
             if let Err(res) = signal::sigaction(*signal, &sig_action) {
                 println!("Error de-initializing signal handling: {:?}", res);

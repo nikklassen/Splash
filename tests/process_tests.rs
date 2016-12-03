@@ -179,7 +179,7 @@ fn no_stop_with_sigtstp() {
 
     let pid = splash.id() as i32;
 
-    signal::kill(pid, libc::SIGTSTP).unwrap();
+    signal::kill(pid, signal::SIGTSTP).unwrap();
     thread::sleep(Duration::from_millis(100));
     splash.kill().unwrap();
 

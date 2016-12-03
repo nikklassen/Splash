@@ -25,7 +25,7 @@ pub mod file;
 pub mod signals;
 
 #[allow(dead_code, non_camel_case_types)]
-mod readline;
+mod bindings;
 
 use getopts::Options;
 use signals::initialize_signals;
@@ -46,8 +46,54 @@ fn main() {
         return;
     }
 
-    initialize_signals();
+    initialize_term();
     prompt::input_loop();
+}
+
+fn initialize_term() {
+    use libc::STDIN_FILENO;
+    use nix::unistd;
+    use nix::sys::signal;
+    use bindings::nix::{tcgetpgrp, tcsetpgrp, getpgrp};
+
+    // See if we are running interactively
+    let shell_terminal = STDIN_FILENO;
+    let interactive = unistd::isatty(shell_terminal).unwrap();
+    let mut shell_pgid;
+
+    if !interactive {
+        return;
+    }
+
+    // Loop until we are in the foreground.
+    loop {
+        match getpgrp() {
+            Ok(id) => { shell_pgid = id; },
+            Err(_) => { continue; }
+        }
+        let term_grp;
+        match tcgetpgrp(shell_terminal) {
+            Ok(id) => { term_grp = id; },
+            Err(_) => { continue; }
+        }
+
+        if term_grp != shell_pgid {
+            signal::kill(shell_pgid, signal::SIGTTIN).unwrap();
+        } else {
+            break;
+        }
+    }
+
+    initialize_signals();
+
+    /* Put ourselves in our own process group.  */
+    shell_pgid = unistd::getpid();
+    if let Err(_) = unistd::setpgid(shell_pgid, shell_pgid) {
+        panic!("Couldn't put the shell in its own process group");
+    }
+
+    // Grab control of the terminal
+    tcsetpgrp(shell_terminal, shell_pgid).unwrap();
 }
 
 fn print_version() {

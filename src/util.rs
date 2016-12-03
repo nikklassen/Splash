@@ -39,3 +39,7 @@ pub fn write_err<D: Display>(s: &D) {
     let res = writeln!(stderr.lock(), "{}", s);
     res.unwrap();
 }
+
+pub fn show_err<S, T: Debug>(e: T) -> Result<S, String> {
+    Err(format!("{:?}", e))
+}

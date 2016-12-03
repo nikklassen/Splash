@@ -1,10 +1,10 @@
-use builtin::{self, BuiltinMap};
 use env::UserEnv;
 use lexer::{self, Op};
 use libc::{self, STDIN_FILENO};
 use nix::unistd::isatty;
-use process;
-use readline;
+use process::{self, JobTable, BuiltinMap};
+use bindings::readline;
+use builtin;
 use std::env;
 use std::ffi::{CString, CStr};
 use std::io;
@@ -17,7 +17,8 @@ use util::write_err;
 static WAVE_EMOJI: &'static str = "\u{1F30A}";
 
 pub fn input_loop() {
-    let mut builtins = builtin::init_builtins();
+    let jobs = process::new_joblist();
+    let mut builtins = builtin::init_builtins(jobs.clone());
     let mut user_env = UserEnv::new();
 
     let mut line = String::new();
@@ -99,7 +100,7 @@ pub fn input_loop() {
             continue;
         }
 
-        match execute(&mut builtins, &mut user_env, command.unwrap()) {
+        match execute(&mut builtins, &mut user_env, command.unwrap(), &jobs.clone()) {
             Err(e) => {
                 write_err(&format!("splash: {}", e));
             },
@@ -222,7 +223,7 @@ fn get_prompt_string() -> String {
     format!("{}{}  ", pwd, WAVE_EMOJI)
 }
 
-fn execute(builtins: &mut BuiltinMap, user_env: &mut UserEnv, command: Op) -> Result<i32, String> {
+fn execute(builtins: &mut BuiltinMap, user_env: &mut UserEnv, command: Op, jobs: &JobTable) -> Result<i32, String> {
     match command {
         Op::EqlStmt { lhs, rhs } => {
             let entry = user_env.vars.entry(lhs)
@@ -230,7 +231,7 @@ fn execute(builtins: &mut BuiltinMap, user_env: &mut UserEnv, command: Op) -> Re
             *entry = rhs;
             Ok(0)
         },
-        op => process::run_processes(builtins, op),
+        op => process::run_processes(builtins, op, jobs),
     }
 }
 
@@ -239,6 +240,7 @@ mod tests {
     use builtin;
     use env::UserEnv;
     use lexer::Op;
+    use process;
     use std::env;
     use std::path::PathBuf;
     use super::{get_prompt_string, WAVE_EMOJI, execute};
@@ -296,13 +298,14 @@ mod tests {
 
     #[test]
     fn add_var() {
-        let mut builtins = builtin::init_builtins();
+        let job_table = process::new_joblist();
+        let mut builtins = builtin::init_builtins(job_table.clone());
         let mut user_env = UserEnv::new();
 
         execute(&mut builtins, &mut user_env, Op::EqlStmt {
             lhs: "FOO".to_string(),
             rhs: "bar".to_string()
-        }).unwrap();
+        }, &job_table.clone()).unwrap();
 
         assert_eq!(user_env.vars["FOO"], "bar".to_string());
     }
