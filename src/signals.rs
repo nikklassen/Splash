@@ -1,7 +1,9 @@
 //! Functions for signal handling within splash
+use std::sync::atomic::{AtomicIsize, Ordering, ATOMIC_ISIZE_INIT};
 
 use nix::sys::signal;
-use std::sync::atomic::{AtomicIsize, Ordering, ATOMIC_ISIZE_INIT};
+
+use job;
 
 pub static LAST_SIGNAL: AtomicIsize = ATOMIC_ISIZE_INIT;
 
@@ -43,7 +45,7 @@ pub fn initialize_signals() {
     }
 
     sig_action = signal::SigAction::new(
-        signal::SigHandler::Handler(handle_signal),
+        signal::SigHandler::Handler(handle_sigchld),
         signal::SA_NOCLDSTOP,
         signal::SigSet::all());
     unsafe {
@@ -70,6 +72,17 @@ pub fn cleanup_signals() {
 
 pub extern "C" fn handle_signal(sig: i32) {
     LAST_SIGNAL.store(sig as isize, Ordering::Relaxed);
+}
+
+pub extern "C" fn handle_sigchld(_sig: i32) {
+    let mut sigchldset = signal::SigSet::empty();
+    sigchldset.add(signal::SIGCHLD);
+    let _ = sigchldset.thread_block();
+
+    job::JOB_TABLE.get_inner().update_jobs();
+
+    let _ = sigchldset.thread_unblock();
+    debug!("Done handling SIGCHLD");
 }
 
 /// Get the value of the most recent signal.  This function resets the last

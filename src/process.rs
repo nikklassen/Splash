@@ -1,55 +1,24 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::io::{self, Write, Seek, SeekFrom, Error};
 use std::ops::IndexMut;
 use std::os::unix::io::IntoRawFd;
 use std::path::Path;
-use std::rc::Rc;
 use std::{iter, process};
 
 use libc::{STDOUT_FILENO, STDIN_FILENO};
-use nix::errno::Errno;
-use nix::sys::wait::{self, WaitStatus};
-use nix::sys::{stat, signal};
+use nix::sys::stat;
 use nix::unistd::{self, ForkResult, execvp, getpid, setpgid, isatty};
-use nix::{self, fcntl};
+use nix::fcntl;
 use tempfile::tempfile;
 
-use bindings::nix::{tcsetpgrp, getpgrp};
+use bindings::nix::tcsetpgrp;
+use job::{Job, SharedJobTable};
 use file::Fd;
 use lexer::{Op, Redir};
 use signals;
 use util;
 
-#[derive(Debug, Clone)]
-pub struct Job {
-    pub pid: i32,
-    pub pgid: i32,
-    pub prog: String,
-    // TODO this should be set from the original user input
-    pub cmd: String,
-}
-
-impl Job {
-    pub fn new(p: &Process) -> Self {
-        let mut cmd = String::from(p.prog.as_str());
-        cmd.push_str(" ");
-        cmd.push_str(&p.args.join(" "));
-        Job {
-            pid: p.pid,
-            pgid: p.pgid,
-            prog: p.prog.clone(),
-            cmd: cmd,
-        }
-    }
-}
-
-pub type JobTable = Rc<RefCell<HashMap<i32, Job>>>;
-
-pub fn new_joblist() -> JobTable {
-    Rc::new(RefCell::new(HashMap::new()))
-}
 
 #[derive(Debug)]
 pub struct Process {
@@ -72,13 +41,22 @@ impl Process {
     }
 }
 
+fn make_job(p: &Process) -> Job {
+    let mut cmd = String::from(p.prog.as_str());
+    if p.args.len() > 0 {
+        cmd.push_str(" ");
+        cmd.push_str(&p.args.join(" "));
+    }
+    Job::new(p.pid, p.pgid, &cmd)
+}
+
 pub trait Builtin {
     fn run(&mut self, args: &[String]) -> io::Result<i32>;
 }
 
 pub type BuiltinMap = HashMap<String, Box<Builtin>>;
 
-pub fn run_processes(builtins: &mut BuiltinMap, command: Op, jobs: &JobTable) -> Result<i32, String> {
+pub fn run_processes(builtins: &mut BuiltinMap, command: Op, jobs: &SharedJobTable) -> Result<i32, String> {
     let mut procs = try!(op_to_processes(command).or_else(|e| Err(format!("{}", e))));
     let mut pgid = 0;
 
@@ -95,14 +73,20 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: Op, jobs: &JobTable) ->
     }
 
     let last_proc = procs.last().unwrap();
-    let job = Job::new(&last_proc);
-    if job.pid == getpid() {
-        Ok(0)
-    } else if !is_interactive() {
-        wait_for_pid(&job, jobs)
-    } else {
-        put_job_in_foreground(&job, false, &jobs)
-    }
+    let mut job_table_inner = jobs.get_inner();
+    let ret;
+    {
+        let job = job_table_inner.add_job(make_job(&last_proc));
+        debug!("job: {:?}", job);
+        ret = if job.pid == getpid() {
+            Ok(0)
+        } else {
+            job.foreground()
+        };
+        job.update_status();
+    };
+    job_table_inner.update_job_list();
+    ret
 }
 
 pub fn exit(errno: i32) {
@@ -253,9 +237,11 @@ where F: FnOnce() -> Result<i32, Error> {
                 pgid = pid;
             }
             setpgid(pid, pgid).unwrap();
+            /*
             if foreground {
                 tcsetpgrp(STDIN_FILENO, pgid).unwrap();
             }
+            */
 
             // Reset signals
             signals::cleanup_signals();
@@ -266,8 +252,7 @@ where F: FnOnce() -> Result<i32, Error> {
         let exit_code = match result {
             Ok(ecode) => ecode,
             Err(e) => {
-                let stderr = io::stderr();
-                writeln!(stderr.lock(), "{:?}", e).unwrap();
+                error!("{:?}", e);
                 127
             }
         };
@@ -308,92 +293,6 @@ fn fork_proc(process: &mut Process, pgid: i32, foreground: bool) {
         // from the process legitimately exiting with that status
         Ok(!(err.errno() as i8) as i32)
     }, foreground);
-}
-
-pub fn put_job_in_foreground(j: &Job, cont: bool, jobs: &JobTable)
--> Result<i32, String> {
-    let shell_pgid = try!(getpgrp().or_else(util::show_err));
-    try!(tcsetpgrp(STDIN_FILENO, j.pgid).or_else(util::show_err));
-
-    if cont {
-        try!(signal::kill(j.pgid, signal::SIGCONT).or(Err("Failed to continue job")));
-    }
-
-    let res = try!(wait_for_pid(j, jobs).or(Err("Failed to wait for proc")));
-    try!(tcsetpgrp(STDIN_FILENO, shell_pgid).or(Err("Failed to set shell pgid")));
-
-    Ok(res)
-}
-
-pub fn wait_for_pid(job: &Job, jobs: &JobTable) -> Result<i32, String> {
-    loop {
-        match wait::waitpid(job.pid, Some(wait::WUNTRACED)) {
-            Ok(WaitStatus::Exited(_pid, exit_code)) => {
-                return if exit_code < 0 {
-                    match Errno::from_i32(!exit_code as i32) {
-                        Errno::ENOENT => {
-                            util::write_err(&format!("splash: {}: command not found", job.prog))
-                        }
-                        Errno::EACCES => {
-                            util::write_err(&format!("splash: permission denied: {}", job.prog))
-                        }
-                        Errno::ENOTDIR => {
-                            util::write_err(&format!("splash: not a directory: {}", job.prog))
-                        }
-                        e => util::write_err(&format!("splash: {}: {}", e.desc(), job.prog)),
-                    }
-                    Ok(127)
-                } else {
-                    Ok(exit_code as i32)
-                };
-            }
-            Ok(WaitStatus::Signaled(_pid, sig, _)) => {
-                return Ok(128 + (sig as i32));
-            }
-            Ok(WaitStatus::Stopped(_pid, _sig)) => {
-                let mut job_map = jobs.borrow_mut();
-                let mut i = 1;
-                // Find the first available job number (job table may have "holes")
-                loop {
-                    if !job_map.contains_key(&i) {
-                        job_map.insert(i, job.clone());
-                        break;
-                    }
-                    i += 1;
-                }
-                // TODO process name
-                println!("splash: suspended\t{}", job.cmd);
-
-                return Ok(0);
-            }
-            Err(nix::Error::Sys(nix::Errno::ECHILD)) => {
-                println!("No child to wait for");
-                return Ok(0);
-            }
-            Err(nix::Error::Sys(nix::Errno::EINTR)) => {
-                // This will be executed if the terminal receives a signal while waiting, assume it was SIGCHLD for now and get information about the last processes
-                match wait::waitpid(job.pid, Some(wait::WUNTRACED | wait::WNOHANG)) {
-                    Ok(WaitStatus::Signaled(_pid, sig, false)) => {
-                        return Ok(128 + (sig as i32));
-                    }
-                    Ok(WaitStatus::StillAlive) => {
-                        // no-op
-                    }
-                    Ok(WaitStatus::Exited(_pid, status)) => {
-                        return Ok(status as i32);
-                    }
-                    // Something else interrupted the system call, try again
-                    e => {
-                        println!("Waiting for process interupted, process status is {:?}", e);
-                    }
-                }
-            }
-            e => {
-                println!("Other error");
-                return util::show_err(e);
-            }
-        }
-    }
 }
 
 fn is_interactive() -> bool {

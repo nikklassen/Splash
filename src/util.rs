@@ -4,9 +4,9 @@ use std::result;
 
 #[export_macro]
 macro_rules! is_match {
-    ($e: expr, $p: pat) => ((
+    ($e: expr, $p: pat) => (
         if let $p = $e { true } else { false }
-    ))
+    )
 }
 
 // from http://stackoverflow.com/a/27582993

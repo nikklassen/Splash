@@ -8,6 +8,9 @@ extern crate tempfile;
 extern crate lazy_static;
 
 #[macro_use]
+extern crate log;
+
+#[macro_use]
 pub mod util;
 
 #[cfg(test)]
@@ -16,19 +19,23 @@ mod test_fixture;
 
 pub mod builtin;
 pub mod env;
+pub mod file;
 pub mod interpolate;
+pub mod job;
 pub mod lexer;
+pub mod logger;
 pub mod process;
 pub mod prompt;
-pub mod tokenizer;
-pub mod file;
 pub mod signals;
+pub mod tokenizer;
 
 #[allow(dead_code, non_camel_case_types)]
 mod bindings;
 
 use getopts::Options;
+
 use signals::initialize_signals;
+use process::BuiltinMap;
 
 fn main() {
     use std::env;
@@ -36,21 +43,30 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     let mut opts = Options::new();
-    opts.optflag("v", "version", "show version information");
+    opts.optflag("V", "version", "show version information");
+
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => { m }
         Err(f) => { panic!(f.to_string()) }
     };
-    if matches.opt_present("v") {
+    if matches.opt_present("V") {
         print_version();
         return;
     }
 
-    initialize_term();
-    prompt::input_loop();
+    let log_level = if cfg!(debug_assertions) {
+        logger::LogLevel::Debug
+    } else {
+        logger::LogLevel::Info
+    };
+    // TODO should be basename of args[0]
+    logger::init("splash", log_level).unwrap();
+
+    let builtins = initialize_term();
+    prompt::input_loop(builtins, job::JOB_TABLE.clone());
 }
 
-fn initialize_term() {
+fn initialize_term() -> BuiltinMap {
     use libc::STDIN_FILENO;
     use nix::unistd;
     use nix::sys::signal;
@@ -61,39 +77,41 @@ fn initialize_term() {
     let interactive = unistd::isatty(shell_terminal).unwrap();
     let mut shell_pgid;
 
-    if !interactive {
-        return;
-    }
-
-    // Loop until we are in the foreground.
-    loop {
-        match getpgrp() {
-            Ok(id) => { shell_pgid = id; },
-            Err(_) => { continue; }
-        }
-        let term_grp;
-        match tcgetpgrp(shell_terminal) {
-            Ok(id) => { term_grp = id; },
-            Err(_) => { continue; }
-        }
-
-        if term_grp != shell_pgid {
-            signal::kill(shell_pgid, signal::SIGTTIN).unwrap();
-        } else {
-            break;
-        }
-    }
-
     initialize_signals();
 
-    /* Put ourselves in our own process group.  */
-    shell_pgid = unistd::getpid();
-    if let Err(_) = unistd::setpgid(shell_pgid, shell_pgid) {
-        panic!("Couldn't put the shell in its own process group");
+    let builtins = builtin::init_builtins(job::JOB_TABLE.clone());
+
+    if interactive {
+        // Loop until we are in the foreground.
+        loop {
+            match getpgrp() {
+                Ok(id) => { shell_pgid = id; },
+                Err(_) => { continue; }
+            }
+            let term_grp;
+            match tcgetpgrp(shell_terminal) {
+                Ok(id) => { term_grp = id; },
+                Err(_) => { continue; }
+            }
+
+            if term_grp != shell_pgid {
+                signal::kill(shell_pgid, signal::SIGTTIN).unwrap();
+            } else {
+                break;
+            }
+        }
+
+        // Put ourselves in our own process group
+        shell_pgid = unistd::getpid();
+        if let Err(_) = unistd::setpgid(shell_pgid, shell_pgid) {
+            panic!("Couldn't put the shell in its own process group");
+        }
+
+        // Grab control of the terminal
+        tcsetpgrp(shell_terminal, shell_pgid).unwrap();
     }
 
-    // Grab control of the terminal
-    tcsetpgrp(shell_terminal, shell_pgid).unwrap();
+    builtins
 }
 
 fn print_version() {
