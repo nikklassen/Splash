@@ -13,7 +13,7 @@ use nix::fcntl;
 use tempfile::tempfile;
 
 use bindings::nix::tcsetpgrp;
-use job::{Job, SharedJobTable};
+use job;
 use file::Fd;
 use lexer::{Op, Redir};
 use signals;
@@ -41,22 +41,13 @@ impl Process {
     }
 }
 
-fn make_job(p: &Process) -> Job {
-    let mut cmd = String::from(p.prog.as_str());
-    if p.args.len() > 0 {
-        cmd.push_str(" ");
-        cmd.push_str(&p.args.join(" "));
-    }
-    Job::new(p.pid, p.pgid, &cmd)
-}
-
 pub trait Builtin {
     fn run(&mut self, args: &[String]) -> io::Result<i32>;
 }
 
 pub type BuiltinMap = HashMap<String, Box<Builtin>>;
 
-pub fn run_processes(builtins: &mut BuiltinMap, command: Op, jobs: &SharedJobTable) -> Result<i32, String> {
+pub fn run_processes(builtins: &mut BuiltinMap, command: Op) -> Result<i32, String> {
     let mut procs = try!(op_to_processes(command).or_else(|e| Err(format!("{}", e))));
     let mut pgid = 0;
 
@@ -73,19 +64,20 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: Op, jobs: &SharedJobTab
     }
 
     let last_proc = procs.last().unwrap();
-    let mut job_table_inner = jobs.get_inner();
     let ret;
     {
-        let job = job_table_inner.add_job(make_job(&last_proc));
-        debug!("job: {:?}", job);
+        let job = job::add_job(&last_proc);
         ret = if job.pid == getpid() {
             Ok(0)
+        } else if !is_interactive() {
+            job::wait_for_job(&job)
         } else {
-            job.foreground()
+            job::foreground_job(&job)
         };
-        job.update_status();
+        job::update_job_status(job.id);
     };
-    job_table_inner.update_job_list();
+    job::update_job_list();
+
     ret
 }
 
@@ -237,11 +229,9 @@ where F: FnOnce() -> Result<i32, Error> {
                 pgid = pid;
             }
             setpgid(pid, pgid).unwrap();
-            /*
             if foreground {
                 tcsetpgrp(STDIN_FILENO, pgid).unwrap();
             }
-            */
 
             // Reset signals
             signals::cleanup_signals();

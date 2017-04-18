@@ -1,5 +1,6 @@
 use std::borrow::Borrow;
 use std::collections::VecDeque;
+use std::io::Error;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use libc::STDIN_FILENO;
@@ -9,6 +10,7 @@ use nix::sys::wait::{self, WaitStatus};
 use nix::{self, unistd};
 
 use bindings::nix::{tcgetpgrp, tcsetpgrp, getpgrp};
+use process::Process;
 use util;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -52,91 +54,6 @@ impl Job {
         }
     }
 
-    pub fn foreground(&mut self) -> Result<i32, String> {
-        if self.status == JobStatus::Running && self.foreground {
-            return Err("Job is already in the foreground".to_string());
-        }
-        let shell_pgid = try!(getpgrp().or_else(util::show_err));
-        try!(tcsetpgrp(STDIN_FILENO, self.pgid).or_else(util::show_err));
-
-        if self.status == JobStatus::Stopped {
-            try!(self.resume());
-        }
-        self.status = JobStatus::Running;
-        self.foreground = true;
-
-        self.join();
-
-        tcsetpgrp(STDIN_FILENO, shell_pgid).expect("Unable to foreground splash");
-
-        if let JobStatus::Done(exit_code) = self.status {
-            Ok(exit_code)
-        } else {
-            Ok(128 + (signal::SIGTSTP as i32))
-        }
-    }
-
-    pub fn background(&mut self) -> Result<i32, String> {
-        self.resume().and_then(|_| {
-            self.status = JobStatus::Running;
-            self.foreground = false;
-            Ok(0)
-        })
-    }
-
-    pub fn join(&mut self) {
-        loop {
-            match wait::waitpid(self.pid, Some(wait::WUNTRACED)) {
-                Ok(WaitStatus::Exited(_pid, exit_code)) => {
-                    let exit_code = if exit_code < 0 {
-                        match Errno::from_i32(!exit_code as i32) {
-                            Errno::ENOENT => {
-                                warn!("{}: command not found", self.cmd)
-                            }
-                            Errno::EACCES => {
-                                warn!("permission denied: {}", self.cmd)
-                            }
-                            Errno::ENOTDIR => {
-                                warn!("not a directory: {}", self.cmd)
-                            }
-                            e => warn!("{}: {}", e.desc(), self.cmd),
-                        }
-                        127
-                    } else {
-                        exit_code as i32
-                    };
-                    self.status = JobStatus::Done(exit_code);
-                    break;
-                }
-                Ok(WaitStatus::Signaled(_pid, sig, _)) => {
-                    let exit_code = 128 + (sig as i32);
-                    self.status = JobStatus::Done(exit_code);
-                    break;
-                }
-                Ok(WaitStatus::StillAlive) | Ok(WaitStatus::Continued(_)) => {
-                    unreachable!("Not sure how we finished waiting for a job that's still alive")
-                }
-                Ok(WaitStatus::Stopped(_pid, _sig)) => {
-                    self.status = JobStatus::Stopped;
-                    break;
-                }
-                Err(nix::Error::Sys(nix::Errno::ECHILD)) => {
-                    // This is bad, I don't know how we could get in this state
-                    panic!("No child to wait for");
-                }
-                Err(nix::Error::Sys(nix::Errno::EINTR)) => {
-                    // This is not normal but possible, try again
-                    debug!("Child stopped");
-                    continue;
-                }
-                Err(e) => {
-                    error!("could not wait for pid {} due to {}", self.pid, e);
-                    break;
-                }
-            }
-        }
-    }
-
     pub fn update_status(&mut self) {
         if let JobStatus::Done(_) = self.status {
             // There's no coming back from done, we'll just get an ECHLD when we wait
@@ -154,21 +71,12 @@ impl Job {
                 JobStatus::Running
             }
             // Process is shy and doesn't want to say anything, that means no change
-            Ok(WaitStatus::StillAlive) => self.status,
-            Err(e) => {
-                error!("Failed to update status for {:?} due to {:?}", self, e);
-                self.status
-            }
+            Ok(WaitStatus::StillAlive) | Err(_) => self.status,
         };
-    }
-
-    fn resume(&mut self) -> Result<(), String> {
-        signal::kill(self.pgid, signal::SIGCONT)
-            .or(Err(format!("Failed to continue job {}", self.id)))
-
     }
 }
 
+#[derive(Clone)]
 pub struct JobTable {
     jobs: VecDeque<Job>,
 }
@@ -192,7 +100,7 @@ impl SharedJobTable {
 }
 
 lazy_static! {
-    pub static ref JOB_TABLE: SharedJobTable = SharedJobTable::new();
+    static ref JOB_TABLE: SharedJobTable = SharedJobTable::new();
 }
 
 impl JobTable {
@@ -212,6 +120,9 @@ impl JobTable {
                 if job.id != 0 && !job.foreground {
                     info!("[{}] done\t{}", job.id, job.cmd);
                 }
+                continue;
+            }
+            if status != JobStatus::Stopped {
                 continue;
             }
 
@@ -251,21 +162,6 @@ impl JobTable {
         }
     }
 
-    pub fn print_jobs(&self) {
-        let mut managed_jobs: Vec<&Job> = self.jobs.iter().filter(|j| j.id != 0).collect();
-        managed_jobs.sort_by(|a, b| a.id.cmp(&b.id));
-        for job in managed_jobs {
-            let status = match job.status {
-                JobStatus::Done(_) => "done",
-                JobStatus::Stopped => "suspended",
-                // These two shouldn't appear with the jobs command, but they may be useful for debugging
-                JobStatus::Running => "running",
-                JobStatus::New => "new",
-            };
-            info!("[{}] {}\t{}", job.id, status, job.cmd);
-        }
-    }
-
     pub fn add_job(&mut self, job: Job) -> &mut Job {
         self.jobs.push_back(job);
         self.jobs.back_mut().unwrap()
@@ -281,8 +177,200 @@ impl JobTable {
     pub fn last_job_mut(&mut self) -> Option<&mut Job> {
         self.jobs.back_mut()
     }
+
+    pub fn last_job(&self) -> Option<&Job> {
+        self.jobs.back()
+    }
 }
 
-pub fn get_job_status(pid: i32) -> nix::Result<WaitStatus> {
+pub fn print_jobs() {
+    let job_table = JOB_TABLE.get_inner();
+    let mut managed_jobs: Vec<&Job> = job_table.jobs.iter().filter(|j| j.id != 0).collect();
+    managed_jobs.sort_by(|a, b| a.id.cmp(&b.id));
+    for job in managed_jobs {
+        let status = match job.status {
+            JobStatus::Done(_) => "done",
+            JobStatus::Stopped => "suspended",
+            // These two shouldn't appear with the jobs command, but they may be useful for debugging
+            JobStatus::Running => "running",
+            JobStatus::New => "new",
+        };
+        info!("[{}] {}\t{}", job.id, status, job.cmd);
+    }
+}
+
+pub fn start_job(foreground: bool) -> Result<i32, Error> {
+    let job_entry = {
+        let job_table = JOB_TABLE.get_inner();
+        job_table.last_job().map(|j| j.clone())
+    };
+    if let Some(ref job) = job_entry {
+        info!("[{}]  {} continued\t{}", job.id,
+              if foreground { "-" } else { "+" }, job.cmd);
+        let res = if foreground {
+            foreground_job(job)
+        } else {
+            background_job(job)
+        };
+        if let Err(e) = res {
+            error!("splash: {}", e);
+            Ok(2)
+        } else {
+            Ok(0)
+        }
+    } else {
+        warn!("{}: no current job",
+              if foreground { "fg" } else { "bg" });
+        Ok(1)
+    }
+}
+
+pub fn add_job(p: &Process) -> Job {
+    let mut cmd = String::from(p.prog.as_str());
+    if p.args.len() > 0 {
+        cmd.push_str(" ");
+        cmd.push_str(&p.args.join(" "));
+    }
+    let new_job = Job::new(p.pid, p.pgid, &cmd);
+    JOB_TABLE.get_inner().add_job(new_job.clone());
+
+    new_job
+}
+
+fn update_job<F>(job_id: i32, f: F) -> bool
+where F: FnOnce(&mut Job) -> () {
+    let mut inner = JOB_TABLE.get_inner();
+    let maybe_job = inner.jobs.iter_mut().find(|j| j.id == job_id);
+    let ret = maybe_job.is_some();
+    if let Some(mut job) = maybe_job {
+        f(job);
+    }
+    ret
+}
+
+pub fn foreground_job(job: &Job) -> Result<i32, String> {
+    if job.status == JobStatus::Running && job.foreground {
+        return Err("Job is already in the foreground".to_string());
+    }
+    let shell_pgid = try!(getpgrp().or_else(util::show_err));
+    try!(tcsetpgrp(STDIN_FILENO, job.pgid).or_else(util::show_err));
+
+    if job.status == JobStatus::Stopped {
+        resume_job(job)?;
+    }
+
+    let ret = wait_for_job(job);
+
+    tcsetpgrp(STDIN_FILENO, shell_pgid).expect("Unable to foreground splash");
+
+    ret
+}
+
+pub fn background_job(job: &Job) -> Result<i32, String>  {
+    resume_job(job).and_then(|_| {
+        update_job(job.id, |mut_job| {
+            mut_job.status = JobStatus::Running;
+            mut_job.foreground = false;
+        });
+        Ok(0)
+    })
+}
+
+pub fn wait_for_job(job: &Job) -> Result<i32, String> {
+    update_job(job.id, |mut_job| {
+        mut_job.status = JobStatus::Running;
+        mut_job.foreground = true;
+    });
+
+    let status = join_job(job);
+
+    update_job(job.id, |mut_job| {
+        mut_job.status = status;
+    });
+
+    if let JobStatus::Done(exit_code) = status {
+        Ok(exit_code)
+    } else {
+        Ok(128 + (signal::SIGTSTP as i32))
+    }
+}
+
+fn join_job(job: &Job) -> JobStatus {
+    let mut status = JobStatus::New;
+    loop {
+        match wait::waitpid(job.pid, Some(wait::WUNTRACED)) {
+            Ok(WaitStatus::Exited(_pid, prog_exit_code)) => {
+                let exit_code = if prog_exit_code < 0 {
+                    match Errno::from_i32(!prog_exit_code as i32) {
+                        Errno::ENOENT => {
+                            warn!("{}: command not found", job.cmd)
+                        }
+                        Errno::EACCES => {
+                            warn!("permission denied: {}", job.cmd)
+                        }
+                        Errno::ENOTDIR => {
+                            warn!("not a directory: {}", job.cmd)
+                        }
+                        e => warn!("{}: {}", e.desc(), job.cmd),
+                    }
+                    127
+                } else {
+                    prog_exit_code as i32
+                };
+                status = JobStatus::Done(exit_code);
+                break;
+            }
+            Ok(WaitStatus::Signaled(_pid, sig, _)) => {
+                let exit_code = 128 + (sig as i32);
+                status = JobStatus::Done(exit_code);
+                break;
+            }
+            Ok(WaitStatus::StillAlive) | Ok(WaitStatus::Continued(_)) => {
+                unreachable!("Not sure how we finished waiting for a job that's still alive")
+            }
+            Ok(WaitStatus::Stopped(_pid, _sig)) => {
+                status = JobStatus::Stopped;
+                break;
+            }
+            Err(nix::Error::Sys(nix::Errno::ECHILD)) => {
+                // This is bad, I don't know how we could get in this state
+                panic!("No child to wait for");
+            }
+            Err(nix::Error::Sys(nix::Errno::EINTR)) => {
+                // This is not normal but possible, try again
+                debug!("Child stopped");
+                continue;
+            }
+            Err(e) => {
+                error!("could not wait for pid {} due to {}", job.pid, e);
+                break;
+            }
+        }
+    }
+    status
+}
+
+fn resume_job(job: &Job) -> Result<(), String> {
+    signal::kill(job.pgid, signal::SIGCONT)
+        .or(Err(format!("Failed to continue job {}", job.id)))
+}
+
+fn get_job_status(pid: i32) -> nix::Result<WaitStatus> {
     wait::waitpid(pid, Some(wait::WUNTRACED | wait::WNOHANG))
+}
+
+pub fn update_job_list() {
+    let mut job_table = JOB_TABLE.get_inner();
+    job_table.update_job_list();
+}
+
+pub fn update_job_status(job_id: i32) {
+    update_job(job_id, |mut_job| {
+        mut_job.update_status();
+    });
+}
+
+pub fn update_jobs() {
+    let mut job_table = JOB_TABLE.get_inner();
+    job_table.update_jobs();
 }

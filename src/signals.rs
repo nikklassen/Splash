@@ -46,7 +46,7 @@ pub fn initialize_signals() {
 
     sig_action = signal::SigAction::new(
         signal::SigHandler::Handler(handle_sigchld),
-        signal::SA_NOCLDSTOP,
+        signal::SA_NOCLDSTOP | signal::SA_RESTART,
         signal::SigSet::all());
     unsafe {
         if let Err(res) = signal::sigaction(signal::SIGCHLD, &sig_action) {
@@ -79,10 +79,9 @@ pub extern "C" fn handle_sigchld(_sig: i32) {
     sigchldset.add(signal::SIGCHLD);
     let _ = sigchldset.thread_block();
 
-    job::JOB_TABLE.get_inner().update_jobs();
+    job::update_jobs();
 
     let _ = sigchldset.thread_unblock();
-    debug!("Done handling SIGCHLD");
 }
 
 /// Get the value of the most recent signal.  This function resets the last

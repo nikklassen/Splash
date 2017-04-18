@@ -1,11 +1,12 @@
 use std::collections::HashMap;
-use process::{Builtin, BuiltinMap};
-use job::{SharedJobTable, JobTable};
 use getopts::Options;
 use std::env;
 use std::io::prelude::*;
 use std::io;
 use std::path::{PathBuf, Component, Path};
+
+use process::{Builtin, BuiltinMap};
+use job;
 
 const SUCCESS: io::Result<i32> = Ok(0);
 
@@ -106,81 +107,26 @@ impl Builtin for Echo {
     }
 }
 
-struct Fg {
-    jobs: SharedJobTable,
-}
-impl Fg {
-    pub fn new(jobs: SharedJobTable) -> Self {
-        Fg {
-            jobs: jobs,
-        }
-    }
-}
-
-fn start_job(jobs: &mut JobTable, job_id: Option<i32>, foreground: bool) -> io::Result<i32> {
-    let mut job_entry = if let Some(id) = job_id {
-        jobs.get_job_mut(id)
-    } else {
-        jobs.last_job_mut()
-    };
-    if let Some(ref mut job) = job_entry {
-        info!("[{}]  {} continued\t{}", job.id,
-              if foreground { "-" } else { "+" }, job.cmd);
-        let res = if foreground {
-            job.foreground()
-        } else {
-            job.background()
-        };
-        if let Err(e) = res {
-            error!("splash: {}", e);
-            Ok(2)
-        } else {
-            Ok(0)
-        }
-    } else {
-        warn!("{}: no current job",
-              if foreground { "fg" } else { "bg" });
-        Ok(1)
-    }
-}
-
+struct Fg;
 impl Builtin for Fg {
     fn run(&mut self, _args: &[String]) -> io::Result<i32> {
-        start_job(&mut self.jobs.get_inner(), None, true)
+        let res = job::start_job(true)?;
+        Ok(res)
     }
 }
 
-struct Bg {
-    jobs: SharedJobTable,
-}
-impl Bg {
-    pub fn new(jobs: SharedJobTable) -> Self {
-        Bg {
-            jobs: jobs,
-        }
-    }
-}
-
+struct Bg;
 impl Builtin for Bg {
     fn run(&mut self, _args: &[String]) -> io::Result<i32> {
-        start_job(&mut self.jobs.get_inner(), None, false)
+        let res = job::start_job(false)?;
+        Ok(res)
     }
 }
 
-struct Jobs {
-    jobs: SharedJobTable,
-}
-impl Jobs {
-    pub fn new(jobs: SharedJobTable) -> Self {
-        Jobs {
-            jobs: jobs,
-        }
-    }
-}
-
+struct Jobs;
 impl Builtin for Jobs {
     fn run(&mut self, _args: &[String]) -> io::Result<i32> {
-        self.jobs.get_inner().print_jobs();
+        job::print_jobs();
         Ok(0)
     }
 }
@@ -194,7 +140,7 @@ macro_rules! add_builtins {
     }}
 }
 
-pub fn init_builtins(jobs: SharedJobTable) -> BuiltinMap {
+pub fn init_builtins() -> BuiltinMap {
     let mut builtins = HashMap::new();
     add_builtins!(
         builtins,
@@ -202,9 +148,9 @@ pub fn init_builtins(jobs: SharedJobTable) -> BuiltinMap {
         ("cd", Cd::new()),
         ("echo", Echo),
         ("pwd", Pwd),
-        ("fg", Fg::new(jobs.clone())),
-        ("bg", Bg::new(jobs.clone())),
-        ("jobs", Jobs::new(jobs.clone()))
+        ("fg", Fg),
+        ("bg", Bg),
+        ("jobs", Jobs)
         ]);
     builtins
 }

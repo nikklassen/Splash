@@ -63,7 +63,7 @@ fn main() {
     logger::init("splash", log_level).unwrap();
 
     let builtins = initialize_term();
-    prompt::input_loop(builtins, job::JOB_TABLE.clone());
+    prompt::input_loop(builtins);
 }
 
 fn initialize_term() -> BuiltinMap {
@@ -79,7 +79,7 @@ fn initialize_term() -> BuiltinMap {
 
     initialize_signals();
 
-    let builtins = builtin::init_builtins(job::JOB_TABLE.clone());
+    let builtins = builtin::init_builtins();
 
     if interactive {
         // Loop until we are in the foreground.
