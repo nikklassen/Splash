@@ -1,6 +1,4 @@
 language: rust
 
-rust: 1.6.0
-
 env:
     - SPASH_BUILD_DIR=$TRAVIS_BUILD_DIR RUST_TEST_THREADS=1
