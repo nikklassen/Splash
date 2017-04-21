@@ -1,7 +1,7 @@
 extern crate combine;
 extern crate getopts;
-extern crate nix;
 extern crate libc;
+extern crate nix;
 extern crate tempfile;
 
 #[macro_use]
@@ -20,14 +20,11 @@ mod test_fixture;
 pub mod builtin;
 pub mod env;
 pub mod file;
-pub mod interpolate;
 pub mod job;
-pub mod lexer;
 pub mod logger;
 pub mod process;
-pub mod prompt;
 pub mod signals;
-pub mod tokenizer;
+pub mod input;
 
 #[allow(dead_code, non_camel_case_types)]
 mod bindings;
@@ -63,7 +60,7 @@ fn main() {
     logger::init("splash", log_level).unwrap();
 
     let builtins = initialize_term();
-    prompt::input_loop(builtins);
+    input::prompt::input_loop(builtins);
 }
 
 fn initialize_term() -> BuiltinMap {

@@ -15,7 +15,7 @@ use tempfile::tempfile;
 use bindings::nix::tcsetpgrp;
 use job;
 use file::Fd;
-use lexer::{Op, Redir};
+use input::parser::{Op, Redir};
 use signals;
 use util;
 
@@ -27,16 +27,18 @@ pub struct Process {
     pub prog: String,
     pub args: Vec<String>,
     pub io: Vec<(i32, Fd)>,
+    pub async: bool,
 }
 
 impl Process {
-    pub fn new(prog: String, args: Vec<String>) -> Process {
+    pub fn new(prog: String, args: Vec<String>, async: bool) -> Process {
         Process {
             pid: 0,
             pgid: 0,
             prog: prog,
             args: args,
             io: Vec::new(),
+            async: async,
         }
     }
 }
@@ -56,9 +58,9 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: Op) -> Result<i32, Stri
     for p in procs.iter_mut() {
         let builtin_entry = builtins.get_mut(&p.prog);
         if let Some(cmd) = builtin_entry {
-            exec_builtin(p, cmd, pgid, true);
+            exec_builtin(p, cmd, pgid);
         } else {
-            fork_proc(p, pgid, true);
+            fork_proc(p, pgid);
             pgid = p.pgid;
         }
     }
@@ -71,6 +73,8 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: Op) -> Result<i32, Stri
             Ok(0)
         } else if !is_interactive() {
             job::wait_for_job(&job)
+        } else if last_proc.async {
+            job::background_job(&job)
         } else {
             job::foreground_job(&job)
         };
@@ -121,8 +125,8 @@ fn has_fd(target_fd: i32, io: &Vec<(i32, Redir)>) -> bool {
 
 fn op_to_processes(op: Op) -> Result<Vec<Process>, String> {
     match op {
-        Op::Cmd { prog, args, io } => {
-            let mut p = Process::new(prog, args);
+        Op::Cmd { prog, args, io, async } => {
+            let mut p = Process::new(prog, args, async);
             if has_fd(STDOUT_FILENO, &io) {
                 let stdout_dup = try!(Fd::dup(STDOUT_FILENO));
                 p.io.push((STDOUT_FILENO, stdout_dup));
@@ -139,8 +143,8 @@ fn op_to_processes(op: Op) -> Result<Vec<Process>, String> {
                 .into_iter()
                 .map(|cmd| {
                     match cmd {
-                        Op::Cmd { prog, args, io } => {
-                            let mut p = Process::new(prog, args);
+                        Op::Cmd { prog, args, io, async } => {
+                            let mut p = Process::new(prog, args, async);
                             add_redirects_to_io(&mut p.io, &io)
                                 .and(Ok(p))
                         }
@@ -201,7 +205,7 @@ fn remap_fds(process: &mut Process) -> Result<(), String> {
     Ok(())
 }
 
-fn fork_process<F>(process: &mut Process, mut pgid: i32, cmd: F, foreground: bool)
+fn fork_process<F>(process: &mut Process, mut pgid: i32, cmd: F)
 where F: FnOnce() -> Result<i32, Error> {
     let f = unistd::fork().unwrap();
     if let ForkResult::Parent { child } = f {
@@ -229,7 +233,7 @@ where F: FnOnce() -> Result<i32, Error> {
                 pgid = pid;
             }
             setpgid(pid, pgid).unwrap();
-            if foreground {
+            if !process.async {
                 tcsetpgrp(STDIN_FILENO, pgid).unwrap();
             }
 
@@ -251,10 +255,10 @@ where F: FnOnce() -> Result<i32, Error> {
     }
 }
 
-fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: i32, foreground: bool) {
+fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: i32) {
     let args: Vec<String> = process.args[..].iter().cloned().collect();
     let has_output = process.io.iter().find(|io_item| io_item.0 == STDOUT_FILENO).is_some();
-    if foreground && !has_output {
+    if !has_output {
         if let Err(e) = remap_fds(process) {
             println!("Got error: {}", e);
             return;
@@ -264,11 +268,11 @@ fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: i32, foregr
     } else {
         fork_process(process, pgid, || {
             cmd.run(&args[..])
-        }, foreground);
+        });
     }
 }
 
-fn fork_proc(process: &mut Process, pgid: i32, foreground: bool) {
+fn fork_proc(process: &mut Process, pgid: i32) {
     let prog = process.prog.clone();
     let args: Vec<String> = process.args.iter().cloned().collect();
     fork_process(process, pgid, move || {
@@ -282,7 +286,7 @@ fn fork_proc(process: &mut Process, pgid: i32, foreground: bool) {
         // Take bitwise NOT so we can differentiate an internal error
         // from the process legitimately exiting with that status
         Ok(!(err.errno() as i8) as i32)
-    }, foreground);
+    });
 }
 
 fn is_interactive() -> bool {

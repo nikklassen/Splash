@@ -1,6 +1,6 @@
 use env::UserEnv;
 use std::env;
-use tokenizer::AST;
+use super::tokenizer::AST;
 
 fn expand_arg(arg: AST, user_env: &UserEnv) -> AST {
     match arg {
@@ -31,7 +31,7 @@ mod tests {
     use env::UserEnv;
     use std::env;
     use super::*;
-    use tokenizer::AST;
+    use input::tokenizer::AST;
 
     fn make_test_env() -> UserEnv {
         let mut user_env = UserEnv::new();

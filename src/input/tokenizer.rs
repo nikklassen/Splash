@@ -39,6 +39,10 @@ pub enum AST {
     Eql,
     Pipe,
     Redir(Option<i32>, RedirOp),
+    Async,
+
+    // Not implemented yet, but included for clarity
+    LogicalAnd,
 }
 
 impl Display for AST {
@@ -169,6 +173,20 @@ fn redir_tok(reader: &mut CharReader) -> ASTResult {
             }
         },
         _ => Ok(None),
+    }
+}
+
+fn amp_tok(reader: &mut CharReader) -> ASTResult {
+    if !is_match!(reader.current, Some('&')) {
+        return Ok(None);
+    }
+
+    reader.advance();
+    match reader.current {
+        Some('&') => accept!(reader, AST::LogicalAnd),
+        _ => {
+            return Ok(Some(AST::Async))
+        }
     }
 }
 
@@ -335,6 +353,7 @@ pub fn tokenize(s: &str) -> Result<Vec<AST>, ASTError> {
         var_tok,
         eql_tok,
         pipe_tok,
+        amp_tok,
     );
 
     tokenize_loop(&mut reader, tokenizers, |reader| reader.current)

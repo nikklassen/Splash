@@ -1,11 +1,12 @@
 //! Functions for signal handling within splash
 use std::sync::atomic::{AtomicIsize, Ordering, ATOMIC_ISIZE_INIT};
 
+pub use nix::sys::signal::*;
 use nix::sys::signal;
 
 use job;
 
-pub static LAST_SIGNAL: AtomicIsize = ATOMIC_ISIZE_INIT;
+static LAST_SIGNAL: AtomicIsize = ATOMIC_ISIZE_INIT;
 
 const SIGNALS: [signal::Signal; 3] = [
     signal::SIGINT,
@@ -75,6 +76,7 @@ pub extern "C" fn handle_signal(sig: i32) {
 }
 
 pub extern "C" fn handle_sigchld(_sig: i32) {
+
     let mut sigchldset = signal::SigSet::empty();
     sigchldset.add(signal::SIGCHLD);
     let _ = sigchldset.thread_block();

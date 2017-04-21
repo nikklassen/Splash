@@ -36,7 +36,7 @@ pub struct Job {
 }
 
 impl Job {
-    pub fn new(pid: i32, pgid: i32, cmd: &str) -> Self {
+    pub fn new(pid: i32, pgid: i32, cmd: &str, async: bool) -> Self {
         let status = if pid == unistd::getpid() {
             // The job can't still be running if we're at this point
             JobStatus::Done(0)
@@ -50,7 +50,7 @@ impl Job {
             pgid: pgid,
             cmd: cmd.to_string(),
             status: status,
-            foreground: true,
+            foreground: !async,
         }
     }
 
@@ -118,7 +118,7 @@ impl JobTable {
                 // Don't print info for jobs that were never managed or terminated in the foreground
                 // TODO killed notification (exit reasons can be something other than "finished")
                 if job.id != 0 && !job.foreground {
-                    info!("[{}] done\t{}", job.id, job.cmd);
+                    info!("\n[{}] done\t{}", job.id, job.cmd);
                 }
                 continue;
             }
@@ -143,7 +143,7 @@ impl JobTable {
         self.update_job_list();
     }
 
-    fn set_job_id(&mut self, job_num: usize) {
+    fn set_job_id(&mut self, job_num: usize) -> i32 {
         let mut i = 1;
         // Find the first available job number (job table may have "holes")
         loop {
@@ -160,11 +160,21 @@ impl JobTable {
             }
             i += 1;
         }
+        self.jobs[job_num].id
     }
 
-    pub fn add_job(&mut self, job: Job) -> &mut Job {
+    pub fn add_job(&mut self, job: Job) {
         self.jobs.push_back(job);
-        self.jobs.back_mut().unwrap()
+        let job_ref = self.jobs.back().unwrap().clone();
+        if !job_ref.foreground {
+            let id = self.set_job_id(job_ref.id as usize);
+            info!("[{}] {}", id, job_ref.pid);
+        }
+        unsafe {
+            use libc;
+            use bindings::readline;
+            libc::fflush(readline::rl_outstream);
+        }
     }
 
     pub fn get_job_mut(&mut self, job_id: i32) -> Option<&mut Job> {
@@ -231,7 +241,7 @@ pub fn add_job(p: &Process) -> Job {
         cmd.push_str(" ");
         cmd.push_str(&p.args.join(" "));
     }
-    let new_job = Job::new(p.pid, p.pgid, &cmd);
+    let new_job = Job::new(p.pid, p.pgid, &cmd, p.async);
     JOB_TABLE.get_inner().add_job(new_job.clone());
 
     new_job
@@ -267,13 +277,15 @@ pub fn foreground_job(job: &Job) -> Result<i32, String> {
 }
 
 pub fn background_job(job: &Job) -> Result<i32, String>  {
-    resume_job(job).and_then(|_| {
-        update_job(job.id, |mut_job| {
-            mut_job.status = JobStatus::Running;
-            mut_job.foreground = false;
-        });
-        Ok(0)
-    })
+    if job.status != JobStatus::New {
+        resume_job(job)?;
+    }
+
+    update_job(job.id, |mut_job| {
+        mut_job.status = JobStatus::Running;
+        mut_job.foreground = false;
+    });
+    Ok(0)
 }
 
 pub fn wait_for_job(job: &Job) -> Result<i32, String> {

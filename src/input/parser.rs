@@ -1,11 +1,11 @@
 use combine::*;
 use combine::combinator::{Optional, Token};
-use combine::primitives::{Stream, Positioner};
+use combine::primitives::{Error, Stream, Positioner};
 use env::UserEnv;
-use interpolate;
+use super::interpolate;
 use libc::{STDOUT_FILENO, STDIN_FILENO};
 use nix::fcntl::{self, OFlag};
-use tokenizer::{AST, RedirOp};
+use super::tokenizer::{AST, RedirOp};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Redir {
@@ -20,6 +20,7 @@ pub enum Op {
         prog: String,
         args: Vec<String>,
         io: Vec<(i32, Redir)>,
+        async: bool,
     },
     EqlStmt {
         lhs: String,
@@ -139,6 +140,27 @@ where I: Stream<Item=AST> {
                 prog: prog,
                 args: string_args,
                 io: redirect_prefix.into_iter().chain(redirect_suffix).collect(),
+                async: false,
+            }
+        })
+        .and(optional(token(AST::Async)))
+        .and_then(|(c, cmd_async)| {
+            match c {
+                Op::Cmd { prog, args, io, .. } => {
+                    Ok(Op::Cmd {
+                        prog: prog,
+                        args: args,
+                        io: io,
+                        async: cmd_async.is_some(),
+                    })
+                }
+                op => {
+                    if cmd_async.is_some() {
+                        Err(Error::Unexpected("&".into()))
+                    } else {
+                        Ok(op)
+                    }
+                }
             }
         })
         .parse_state(input)
@@ -236,8 +258,8 @@ mod tests {
     use env::UserEnv;
     use libc::{STDOUT_FILENO, STDIN_FILENO};
     use nix::fcntl;
+    use input::tokenizer::tokenize;
     use super::*;
-    use tokenizer::tokenize;
 
     #[test]
     fn parse_cmd_no_args() {
@@ -248,6 +270,7 @@ mod tests {
             prog: "cmd".to_string(),
             args: Vec::new(),
             io: Vec::new(),
+            async: false,
         });
     }
 
@@ -260,6 +283,7 @@ mod tests {
             prog: "cmd".to_string(),
             args: vec!["arg1".to_string(), "arg2".to_string()],
             io: Vec::new(),
+            async: false,
         });
     }
 
@@ -272,6 +296,7 @@ mod tests {
             prog: "cmd".to_string(),
             args: vec!["arg1  arg2".to_string()],
             io: Vec::new(),
+            async: false,
         });
     }
 
@@ -284,6 +309,7 @@ mod tests {
             prog: "cmd".to_string(),
             args: vec!["arg1arg2 arg3arg4 arg5".to_string()],
             io: Vec::new(),
+            async: false,
         });
     }
 
@@ -317,11 +343,13 @@ mod tests {
                     prog: "cmd1".to_string(),
                     args: Vec::new(),
                     io: Vec::new(),
+                    async: false,
                 },
                 Op::Cmd {
                     prog: "cmd2".to_string(),
                     args: vec!["arg".to_string()],
                     io: Vec::new(),
+                    async: false,
                 }],
         });
     }
@@ -342,6 +370,7 @@ mod tests {
                 (STDOUT_FILENO, Redir::File("log.txt".to_string(), append_flags)),
                 (2, Redir::Copy(1)),
             ],
+            async: false,
         })
     }
 
@@ -358,6 +387,7 @@ mod tests {
                 (STDIN_FILENO, Redir::File("file.txt".to_string(), read_flags)),
                 (STDIN_FILENO, Redir::Copy(3)),
             ],
+            async: false,
         })
     }
 
@@ -373,6 +403,7 @@ mod tests {
             io: vec![
                 (STDOUT_FILENO, Redir::File("file.txt".to_string(), write_flags)),
             ],
+            async: false,
         })
     }
 
@@ -388,6 +419,20 @@ mod tests {
             io: vec![
                 (STDIN_FILENO, Redir::Temp(contents)),
             ],
+            async: false,
+        })
+    }
+
+    #[test]
+    fn async_command() {
+        let user_env = UserEnv::new();
+        let input = tokenize("cmd &").unwrap();
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
+        assert_eq!(cmd, Op::Cmd {
+            prog: "cmd".into(),
+            args: Vec::new(),
+            io: vec![],
+            async: true,
         })
     }
 }

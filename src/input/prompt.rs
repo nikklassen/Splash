@@ -10,9 +10,10 @@ use nix::unistd::isatty;
 
 use bindings::readline;
 use env::UserEnv;
-use lexer::{self, Op};
+use super::parser::{self, Op};
 use process::{self, BuiltinMap};
-use tokenizer::{self, AST, ASTError, RedirOp};
+use signals;
+use super::tokenizer::{self, AST, ASTError, RedirOp};
 use util::write_err;
 
 static WAVE_EMOJI: &'static str = "\u{1F30A}";
@@ -40,9 +41,6 @@ pub fn input_loop(mut builtins: BuiltinMap) {
         }
         let tokens: Vec<AST> = match tokenizer::tokenize(&line) {
             Ok(tokens) => {
-                if tokens.is_empty() {
-                    continue;
-                }
                 tokens
             },
             Err(e) => {
@@ -91,7 +89,7 @@ pub fn input_loop(mut builtins: BuiltinMap) {
             }
         }
 
-        let parsed = lexer::parse(tokens, &user_env, &mut input);
+        let parsed = parser::parse(tokens, &user_env, &mut input);
 
         if let Err(e) = parsed {
             write_err(&format!("splash: {}", e));
@@ -196,16 +194,30 @@ where T: Into<String> {
         }
 
         let r = select::select(select::FD_SETSIZE, Some(&mut fds), None, None, None);
-        // ^C
         if r.is_err() {
-            unsafe {
-                readline::rl_callback_handler_remove();
-            }
-            // print a blank line to put the next prompt on the next line
-            println!("");
+            if r != Err(::nix::Error::Sys(::nix::Errno::EINTR)) {
+                unsafe {
+                    readline::rl_callback_handler_remove();
+                }
 
-            // Just return a blank line because this isn't the "exit" case that comes from ^D
-            return Some("".to_string());
+                // print a blank line to put the next prompt on the next line
+                println!("");
+
+                // Just return a blank line because this isn't the "exit" case that comes from ^D
+                return Some("".to_string());
+            }
+            // ^C
+            else if signals::get_last_signal() == signals::SIGINT as i32 {
+                // print a blank line to put the next prompt on the next line
+                println!("\r");
+
+                // Just return a blank line because this isn't the "exit" case that comes from ^D
+                return Some("".to_string());
+            } else {
+                unsafe {
+                    readline::rl_forced_update_display();
+                }
+            }
         }
 
         unsafe {
@@ -242,7 +254,7 @@ fn execute(builtins: &mut BuiltinMap, user_env: &mut UserEnv, command: Op) -> Re
 mod tests {
     use builtin;
     use env::UserEnv;
-    use lexer::Op;
+    use super::parser::Op;
     use std::env;
     use std::path::PathBuf;
     use super::{get_prompt_string, WAVE_EMOJI, execute};
