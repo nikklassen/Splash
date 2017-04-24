@@ -3,58 +3,9 @@ use combine::combinator::{self, Optional, Many1};
 use combine::primitives::{Stream, Positioner};
 use env::UserEnv;
 use super::interpolate;
-use libc::{STDOUT_FILENO, STDIN_FILENO};
-use nix::fcntl::{self, OFlag};
-use super::token::{Token, RedirOp};
+use super::token::{self, Token};
+use super::ast::*;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Redir {
-    Copy(i32),
-    File(String, OFlag),
-    Temp(String),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CmdPrefix {
-    IORedirect {
-        fd: i32,
-        target: Redir,
-    },
-    Assignment {
-        lhs: String,
-        rhs: String,
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Op {
-    Cmd {
-        prog: Option<String>,
-        args: Vec<String>,
-        io: Vec<CmdPrefix>,
-        env: Vec<CmdPrefix>,
-    },
-    EqlStmt {
-        lhs: String,
-        rhs: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Pipeline {
-    pub bang: bool,
-    pub seq: Vec<Op>,
-    pub async: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CommandList {
-    AndList(Box<CommandList>, Pipeline),
-    OrList(Box<CommandList>, Pipeline),
-    SimpleList(Pipeline),
-}
-
-pub type CompleteCommand = Vec<CommandList>;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TokenPositioner(usize);
@@ -100,7 +51,7 @@ where I: Stream<Item=Token> {
             let value = arg
             .into_iter()
             .fold(String::new(), |mut acc, a| {
-                if let Some(ref v) = to_value(a) {
+                if let Some(ref v) = token::to_value(a) {
                     acc.push_str(&v);
                 }
                 acc
@@ -108,48 +59,6 @@ where I: Stream<Item=Token> {
             Token::String(value)
         })
         .parse_stream(input)
-}
-
-fn to_value(a: Token) -> Option<String> {
-    match a {
-        Token::String(s) => Some(s),
-        Token::Quoted(contents) => Some(contents.into_iter().fold(String::new(), |mut acc: String, t| {
-            let v = to_value(t);
-            if v.is_none() {
-                return acc;
-            }
-            acc.push_str(&v.unwrap());
-            acc
-        })),
-        _ => None,
-    }
-}
-
-fn build_io_redirect((redir, io_file): (Token, Token)) -> CmdPrefix {
-    let file_name = to_value(io_file).unwrap();
-    let io_number;
-    let redir_op;
-    if let Token::Redir(io_number_opt, op) = redir {
-        io_number = io_number_opt.unwrap_or(
-            if op.is_out() { STDOUT_FILENO } else { STDIN_FILENO });
-        redir_op = op;
-    } else {
-        unreachable!();
-    }
-    let target = match redir_op {
-        RedirOp::LESS => Redir::File(file_name, fcntl::O_RDONLY),
-        RedirOp::LESSAND => Redir::Copy(file_name.parse::<i32>().unwrap()),
-        RedirOp::LESSGREAT => Redir::File(file_name, fcntl::O_RDWR | fcntl::O_CREAT),
-
-        RedirOp::GREAT | RedirOp::CLOBBER => Redir::File(file_name, fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_TRUNC),
-        RedirOp::DGREAT => Redir::File(file_name, fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_APPEND),
-        RedirOp::GREATAND => Redir::Copy(file_name.parse::<i32>().unwrap()),
-        RedirOp::DLESS | RedirOp::DLESSDASH => Redir::Temp(String::new()),
-    };
-    CmdPrefix::IORedirect {
-        fd: io_number,
-        target: target,
-    }
 }
 
 fn io_redirect<I>(input: I) -> primitives::ParseResult<CmdPrefix, I>
@@ -168,8 +77,8 @@ where I: Stream<Item=Token> {
         .and(parser(word::<I>))
         .map(|(lhs, rhs)| {
             CmdPrefix::Assignment {
-                lhs: to_value(lhs).unwrap(),
-                rhs: to_value(rhs).unwrap()
+                lhs: token::to_value(lhs).unwrap(),
+                rhs: token::to_value(rhs).unwrap()
             }
         })
     .parse_stream(input)
@@ -192,7 +101,7 @@ where I: Stream<Item=Token> {
         let mut args: Vec<String> = Vec::new();
         let mut string_args: Vec<String> = cmd_args
             .into_iter()
-            .map(|a| to_value(a).unwrap_or(String::new()))
+            .map(|a| token::to_value(a).unwrap_or(String::new()))
             .collect();
         if string_args.len() > 0 {
             prog = Some(string_args.remove(0));

@@ -16,7 +16,7 @@ use bindings::nix::tcsetpgrp;
 use env::UserEnv;
 use job;
 use file::Fd;
-use input::parser::{Op, Redir, CommandList, Pipeline, CmdPrefix};
+use input::ast::{Op, Redir, CommandList, Pipeline, CmdPrefix};
 use signals;
 use util;
 

@@ -69,3 +69,18 @@ impl Display for TokenError {
 
 pub type TokenResult = Result<Option<Token>, TokenError>;
 
+pub fn to_value(a: Token) -> Option<String> {
+    match a {
+        Token::String(s) => Some(s),
+        Token::Quoted(contents) => Some(contents.into_iter().fold(String::new(), |mut acc: String, t| {
+            let v = to_value(t);
+            if v.is_none() {
+                return acc;
+            }
+            acc.push_str(&v.unwrap());
+            acc
+        })),
+        _ => None,
+    }
+}
+
