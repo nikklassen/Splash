@@ -10,7 +10,7 @@ use nix::unistd::isatty;
 
 use bindings::readline;
 use env::UserEnv;
-use super::parser::{self, Op};
+use super::parser;
 use process::{self, BuiltinMap};
 use signals;
 use super::tokenizer::{self, AST, ASTError, RedirOp};
@@ -96,19 +96,22 @@ pub fn input_loop(mut builtins: BuiltinMap) {
             continue;
         }
 
-        let command = parsed.unwrap();
-        if command.is_none() {
+        let commands = parsed.unwrap();
+        if commands.is_empty() {
             continue;
         }
 
-        match execute(&mut builtins, &mut user_env, command.unwrap()) {
-            Err(e) => {
-                write_err(&format!("splash: {}", e));
-            },
-            Ok(n) => {
-                last_status = n;
-            },
-        };
+        for command in commands {
+            let res = process::run_processes(&mut builtins, command, &mut user_env);
+            match res {
+                Err(e) => {
+                    write_err(&format!("splash: {}", e));
+                },
+                Ok(n) => {
+                    last_status = n;
+                },
+            };
+        }
     }
 
     process::exit(last_status);
@@ -238,26 +241,11 @@ fn get_prompt_string() -> String {
     format!("{}{}  ", pwd, WAVE_EMOJI)
 }
 
-fn execute(builtins: &mut BuiltinMap, user_env: &mut UserEnv, command: Op) -> Result<i32, String> {
-    match command {
-        Op::EqlStmt { lhs, rhs } => {
-            let entry = user_env.vars.entry(lhs)
-                .or_insert(String::new());
-            *entry = rhs;
-            Ok(0)
-        },
-        op => process::run_processes(builtins, op),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use builtin;
-    use env::UserEnv;
-    use super::parser::Op;
     use std::env;
     use std::path::PathBuf;
-    use super::{get_prompt_string, WAVE_EMOJI, execute};
+    use super::{get_prompt_string, WAVE_EMOJI};
     use test_fixture::*;
 
     struct PromptTests;
@@ -308,18 +296,5 @@ mod tests {
     fn prompt_tests() {
         let fixture = PromptTests;
         test_fixture_runner(fixture);
-    }
-
-    #[test]
-    fn add_var() {
-        let mut builtins = builtin::init_builtins();
-        let mut user_env = UserEnv::new();
-
-        execute(&mut builtins, &mut user_env, Op::EqlStmt {
-            lhs: "FOO".to_string(),
-            rhs: "bar".to_string()
-        }).unwrap();
-
-        assert_eq!(user_env.vars["FOO"], "bar".to_string());
     }
 }

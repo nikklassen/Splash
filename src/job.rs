@@ -235,8 +235,13 @@ pub fn start_job(foreground: bool) -> Result<i32, Error> {
     }
 }
 
-pub fn add_job(p: &Process) -> Job {
-    let mut cmd = String::from(p.prog.as_str());
+pub fn add_job(p: &Process) -> Result<Job, String> {
+    if p.prog == None {
+        debug!("bad process to job: {:?}", p);
+        return Err("Empty process can't be jobbed".to_string());
+    }
+
+    let mut cmd = p.prog.as_ref().unwrap().clone();
     if p.args.len() > 0 {
         cmd.push_str(" ");
         cmd.push_str(&p.args.join(" "));
@@ -244,7 +249,7 @@ pub fn add_job(p: &Process) -> Job {
     let new_job = Job::new(p.pid, p.pgid, &cmd, p.async);
     JOB_TABLE.get_inner().add_job(new_job.clone());
 
-    new_job
+    Ok(new_job)
 }
 
 fn update_job<F>(job_id: i32, f: F) -> bool

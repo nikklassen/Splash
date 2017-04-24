@@ -13,9 +13,10 @@ use nix::fcntl;
 use tempfile::tempfile;
 
 use bindings::nix::tcsetpgrp;
+use env::UserEnv;
 use job;
 use file::Fd;
-use input::parser::{Op, Redir};
+use input::parser::{Op, Redir, CommandList, Pipeline, CmdPrefix};
 use signals;
 use util;
 
@@ -24,21 +25,23 @@ use util;
 pub struct Process {
     pub pid: i32,
     pub pgid: i32,
-    pub prog: String,
+    pub prog: Option<String>,
     pub args: Vec<String>,
     pub io: Vec<(i32, Fd)>,
     pub async: bool,
+    pub env: Vec<CmdPrefix>,
 }
 
 impl Process {
-    pub fn new(prog: String, args: Vec<String>, async: bool) -> Process {
+    pub fn new(prog: Option<String>, args: Vec<String>, env: Vec<CmdPrefix>) -> Process {
         Process {
             pid: 0,
             pgid: 0,
             prog: prog,
             args: args,
             io: Vec::new(),
-            async: async,
+            async: false,
+            env: env,
         }
     }
 }
@@ -49,14 +52,26 @@ pub trait Builtin {
 
 pub type BuiltinMap = HashMap<String, Box<Builtin>>;
 
-pub fn run_processes(builtins: &mut BuiltinMap, command: Op) -> Result<i32, String> {
-    let mut procs = try!(op_to_processes(command).or_else(|e| Err(format!("{}", e))));
+pub fn run_processes(builtins: &mut BuiltinMap, command: CommandList, user_env: &mut UserEnv) -> Result<i32, String> {
+    // TODO multiple pipelines
+    let pipeline = match command {
+        CommandList::AndList(_, p) => p,
+        CommandList::OrList(_, p) => p,
+        CommandList::SimpleList(p) => p,
+    };
+
+    let mut procs = try!(pipeline_to_processes(pipeline).or_else(|e| Err(format!("{}", e))));
     let mut pgid = 0;
 
     // TODO all threads need to be spawned then the last waited for
     // the all others subsequently killed if not done
     for p in procs.iter_mut() {
-        let builtin_entry = builtins.get_mut(&p.prog);
+        if p.prog.is_none() {
+            update_env(p, user_env);
+            continue;
+        }
+
+        let builtin_entry = builtins.get_mut(p.prog.as_ref().unwrap());
         if let Some(cmd) = builtin_entry {
             exec_builtin(p, cmd, pgid);
         } else {
@@ -68,7 +83,7 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: Op) -> Result<i32, Stri
     let last_proc = procs.last().unwrap();
     let ret;
     {
-        let job = job::add_job(&last_proc);
+        let job = job::add_job(&last_proc)?;
         ret = if job.pid == getpid() {
             Ok(0)
         } else if !is_interactive() {
@@ -96,99 +111,94 @@ macro_rules! str_vec {
     }
 }
 
-fn add_redirects_to_io(io: &mut Vec<(i32, Fd)>, redirects: &Vec<(i32, Redir)>) -> Result<(), String> {
-    for &(ref io_number, ref io_redirect) in redirects {
-        let fd = match io_redirect {
-            &Redir::File(ref name, ref flags) => {
-                let mode = stat::S_IRUSR | stat::S_IWUSR | stat::S_IRGRP | stat::S_IROTH;
-                let path = Path::new(name);
-                let file = try!(fcntl::open(path, *flags, mode).or_else(util::show_err));
-                Fd::new(file)
-            },
-            &Redir::Copy(n) => try!(Fd::dup(n)),
-            &Redir::Temp(ref contents) => {
-                let mut tmpfile = try!(tempfile()
-                    .or(Err("Could not create temporary file".to_string())));
-                try!(tmpfile.write_all(contents.as_bytes()).or_else(util::show_err));
-                try!(tmpfile.seek(SeekFrom::Start(0)).or_else(util::show_err));
-                Fd::new(tmpfile.into_raw_fd())
-            },
-        };
-        io.push((*io_number, fd));
+fn update_env(p: &Process, mut user_env: &mut UserEnv) {
+    for assignment in p.env.iter() {
+        if let &CmdPrefix::Assignment { ref lhs, ref rhs } = assignment {
+            let entry = user_env.vars.entry((*lhs).clone())
+                .or_insert(String::new());
+            *entry = (*rhs).clone();
+        }
+    }
+}
+
+fn add_redirects_to_io(io: &mut Vec<(i32, Fd)>, redirects: &Vec<CmdPrefix>) -> Result<(), String> {
+    for r in redirects {
+        if let &CmdPrefix::IORedirect { fd: ref io_number, target: ref io_redirect } = r {
+            let fd = match io_redirect {
+                &Redir::File(ref name, ref flags) => {
+                    let mode = stat::S_IRUSR | stat::S_IWUSR | stat::S_IRGRP | stat::S_IROTH;
+                    let path = Path::new(name);
+                    let file = try!(fcntl::open(path, *flags, mode).or_else(util::show_err));
+                    Fd::new(file)
+                },
+                &Redir::Copy(n) => try!(Fd::dup(n)),
+                &Redir::Temp(ref contents) => {
+                    let mut tmpfile = try!(tempfile()
+                        .or(Err("Could not create temporary file".to_string())));
+                    try!(tmpfile.write_all(contents.as_bytes()).or_else(util::show_err));
+                    try!(tmpfile.seek(SeekFrom::Start(0)).or_else(util::show_err));
+                    Fd::new(tmpfile.into_raw_fd())
+                },
+            };
+            io.push((*io_number, fd));
+        }
     }
     Ok(())
 }
 
-fn has_fd(target_fd: i32, io: &Vec<(i32, Redir)>) -> bool {
-    io.iter().any(|&(fd, _)| fd == target_fd)
-}
+fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
+    let cmds: Vec<Op> = pipeline.seq;
 
-fn op_to_processes(op: Op) -> Result<Vec<Process>, String> {
-    match op {
-        Op::Cmd { prog, args, io, async } => {
-            let mut p = Process::new(prog, args, async);
-            if has_fd(STDOUT_FILENO, &io) {
-                let stdout_dup = try!(Fd::dup(STDOUT_FILENO));
-                p.io.push((STDOUT_FILENO, stdout_dup));
-            }
-            if has_fd(STDIN_FILENO, &io) {
-                let stdin_dup = try!(Fd::dup(STDIN_FILENO));
-                p.io.push((STDIN_FILENO, stdin_dup));
-            }
-            try!(add_redirects_to_io(&mut p.io, &io));
-            Ok(vec![p])
-        }
-        Op::Pipe { cmds } => {
-            let mut procs: Vec<Process> = try!(util::sequence(cmds
-                .into_iter()
-                .map(|cmd| {
-                    match cmd {
-                        Op::Cmd { prog, args, io, async } => {
-                            let mut p = Process::new(prog, args, async);
-                            add_redirects_to_io(&mut p.io, &io)
-                                .and(Ok(p))
-                        }
-                        _ => unreachable!(),
-                    }
-                })
-                .collect()));
-
-            let num_procs = procs.len();
-            let mut prev_pipe_out = try!(Fd::dup(STDIN_FILENO));
-
-            let has_input = |io: &Vec<(i32, Fd)>| io.iter().find(|io_item| io_item.0 == STDIN_FILENO).is_some();
-
-            for i in 0..(num_procs - 1) {
-                let ref mut p = procs.index_mut(i);
-                let (pipe_out, pipe_in) = unistd::pipe().unwrap();
-                if has_input(&p.io) {
-                    util::write_err(&format!(
-                        "splash: Ignoring piped input for {}; programs may not behave as expected.",
-                        p.prog));
+    let mut procs: Vec<Process> = try!(util::sequence(cmds
+        .into_iter()
+        .map(|cmd| {
+            match cmd {
+                Op::Cmd { prog, args, io, env } => {
+                    let mut p = Process::new(prog, args, env);
+                    add_redirects_to_io(&mut p.io, &io)
+                        .and(Ok(p))
                 }
-                // insert at the front so these file descriptors will be overwritten by anything later
-                p.io.insert(0, (STDOUT_FILENO, Fd::new(pipe_in)));
-                p.io.insert(0, (STDIN_FILENO, prev_pipe_out));
-
-                prev_pipe_out = Fd::new(pipe_out);
+                _ => unreachable!()
             }
+        })
+        .collect()));
 
-            // End the borrow of procs before we return it
-            {
-                let mut last_proc = procs.last_mut().unwrap();
-                if num_procs > 1 && has_input(&last_proc.io) {
-                    util::write_err(&format!(
-                        "splash: Ignoring piped input for {}; programs may not behave as expected.",
-                        last_proc.prog));
-                }
-                let stdout_dup = try!(Fd::dup(STDOUT_FILENO));
-                last_proc.io.insert(0, (STDOUT_FILENO, stdout_dup));
-                last_proc.io.insert(0, (STDIN_FILENO, prev_pipe_out));
-            }
-            Ok(procs)
+    let num_procs = procs.len();
+    let mut prev_pipe_out = try!(Fd::dup(STDIN_FILENO));
+
+    let has_input = |io: &Vec<(i32, Fd)>| io.iter().find(|io_item| io_item.0 == STDIN_FILENO).is_some();
+
+    for i in 0..(num_procs - 1) {
+        let ref mut p = procs.index_mut(i);
+        let (pipe_out, pipe_in) = unistd::pipe().unwrap();
+
+        if has_input(&p.io) {
+            util::write_err(&format!(
+                "splash: Ignoring piped input for {}; programs may not behave as expected.",
+                p.prog.as_ref().unwrap_or(&"assignment".to_string())));
         }
-        _ => unreachable!(),
+        // insert at the front so these file descriptors will be overwritten by anything later
+        p.io.insert(0, (STDOUT_FILENO, Fd::new(pipe_in)));
+        p.io.insert(0, (STDIN_FILENO, prev_pipe_out));
+
+        prev_pipe_out = Fd::new(pipe_out);
     }
+
+    // End the borrow of procs before we return it
+    {
+        let mut last_proc = procs.last_mut().unwrap();
+        last_proc.async = pipeline.async;
+
+        if num_procs > 1 && has_input(&last_proc.io) {
+            util::write_err(&format!(
+                "splash: Ignoring piped input for {}; programs may not behave as expected.",
+                last_proc.prog.as_ref().unwrap_or(&"assignment".to_string())));
+        }
+        let stdout_dup = try!(Fd::dup(STDOUT_FILENO));
+        last_proc.io.insert(0, (STDOUT_FILENO, stdout_dup));
+        last_proc.io.insert(0, (STDIN_FILENO, prev_pipe_out));
+    }
+    Ok(procs)
 }
 
 /// To be called after forking this function will reassign the file descriptors correctly for the
@@ -276,12 +286,12 @@ fn fork_proc(process: &mut Process, pgid: i32) {
     let prog = process.prog.clone();
     let args: Vec<String> = process.args.iter().cloned().collect();
     fork_process(process, pgid, move || {
-        let args = &iter::once(&prog)
+        let args = &iter::once(prog.as_ref().unwrap())
             .chain(args.iter())
             .map(|s| CString::new(s.as_bytes()).unwrap())
             .collect::<Vec<_>>()[..];
 
-        let err = execvp(&CString::new(prog.as_bytes()).unwrap(), args).unwrap_err();
+        let err = execvp(&CString::new(prog.as_ref().unwrap().as_bytes()).unwrap(), args).unwrap_err();
 
         // Take bitwise NOT so we can differentiate an internal error
         // from the process legitimately exiting with that status

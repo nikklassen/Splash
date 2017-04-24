@@ -1,6 +1,6 @@
 use combine::*;
-use combine::combinator::{Optional, Token};
-use combine::primitives::{Error, Stream, Positioner};
+use combine::combinator::{Optional, Token, Many1};
+use combine::primitives::{Stream, Positioner};
 use env::UserEnv;
 use super::interpolate;
 use libc::{STDOUT_FILENO, STDIN_FILENO};
@@ -15,21 +15,46 @@ pub enum Redir {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CmdPrefix {
+    IORedirect {
+        fd: i32,
+        target: Redir,
+    },
+    Assignment {
+        lhs: String,
+        rhs: String,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
     Cmd {
-        prog: String,
+        prog: Option<String>,
         args: Vec<String>,
-        io: Vec<(i32, Redir)>,
-        async: bool,
+        io: Vec<CmdPrefix>,
+        env: Vec<CmdPrefix>,
     },
     EqlStmt {
         lhs: String,
         rhs: String,
     },
-    Pipe {
-        cmds: Vec<Op>,
-    },
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pipeline {
+    pub bang: bool,
+    pub seq: Vec<Op>,
+    pub async: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandList {
+    AndList(Box<CommandList>, Pipeline),
+    OrList(Box<CommandList>, Pipeline),
+    SimpleList(Pipeline),
+}
+
+pub type CompleteCommand = Vec<CommandList>;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ASTPositioner(usize);
@@ -42,6 +67,13 @@ impl Positioner for AST {
 
     fn update(&self, p: &mut ASTPositioner) {
         p.0 += 1;
+    }
+}
+
+use std::fmt;
+impl fmt::Display for ASTPositioner {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Position {}", self.0)
     }
 }
 
@@ -59,7 +91,7 @@ impl Positioner for Op {
     }
 }
 
-fn word<I>(input: State<I>) -> primitives::ParseResult<AST, I>
+fn word<I>(input: I) -> primitives::ParseResult<AST, I>
 where I: Stream<Item=AST> {
     many1(satisfy(|t| match t {
         AST::String(_) | AST::Quoted(_) | AST::Var(_) => true,
@@ -75,7 +107,7 @@ where I: Stream<Item=AST> {
             });
             AST::String(value)
         })
-        .parse_state(input)
+        .parse_stream(input)
 }
 
 fn to_value(a: AST) -> Option<String> {
@@ -93,7 +125,7 @@ fn to_value(a: AST) -> Option<String> {
     }
 }
 
-fn build_io_redirect((redir, io_file): (AST, AST)) -> (i32, Redir) {
+fn build_io_redirect((redir, io_file): (AST, AST)) -> CmdPrefix {
     let file_name = to_value(io_file).unwrap();
     let io_number;
     let redir_op;
@@ -104,7 +136,7 @@ fn build_io_redirect((redir, io_file): (AST, AST)) -> (i32, Redir) {
     } else {
         unreachable!();
     }
-    (io_number, match redir_op {
+    let target = match redir_op {
         RedirOp::LESS => Redir::File(file_name, fcntl::O_RDONLY),
         RedirOp::LESSAND => Redir::Copy(file_name.parse::<i32>().unwrap()),
         RedirOp::LESSGREAT => Redir::File(file_name, fcntl::O_RDWR | fcntl::O_CREAT),
@@ -113,78 +145,75 @@ fn build_io_redirect((redir, io_file): (AST, AST)) -> (i32, Redir) {
         RedirOp::DGREAT => Redir::File(file_name, fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_APPEND),
         RedirOp::GREATAND => Redir::Copy(file_name.parse::<i32>().unwrap()),
         RedirOp::DLESS | RedirOp::DLESSDASH => Redir::Temp(String::new()),
-    })
+    };
+    CmdPrefix::IORedirect {
+        fd: io_number,
+        target: target,
+    }
 }
 
-fn io_redirect<I>(input: State<I>) -> primitives::ParseResult<(i32, Redir), I>
+fn io_redirect<I>(input: I) -> primitives::ParseResult<CmdPrefix, I>
 where I: Stream<Item=AST> {
     satisfy(|t| is_match!(t, AST::Redir(..)))
          .skip(ws())
          .and(parser(word::<I>))
     .map(build_io_redirect)
-    .parse_state(input)
+    .parse_stream(input)
 }
 
-fn command<I>(input: State<I>) -> primitives::ParseResult<Op, I>
-where I: Stream<Item=AST> {
-    many(parser(io_redirect::<I>).skip(ws()))
-        .and(many1(parser(word::<I>).skip(ws())))
-        .and(many(parser(io_redirect::<I>).skip(ws())))
-        .map(|((redirect_prefix, args), redirect_suffix): ((Vec<(i32, Redir)>, Vec<AST>), Vec<(i32, Redir)>)| {
-            let mut string_args: Vec<String> = args
-                .into_iter()
-                .map(|a| to_value(a).unwrap_or(String::new()))
-                .collect();
-            let prog = string_args.remove(0);
-            Op::Cmd {
-                prog: prog,
-                args: string_args,
-                io: redirect_prefix.into_iter().chain(redirect_suffix).collect(),
-                async: false,
-            }
-        })
-        .and(optional(token(AST::Async)))
-        .and_then(|(c, cmd_async)| {
-            match c {
-                Op::Cmd { prog, args, io, .. } => {
-                    Ok(Op::Cmd {
-                        prog: prog,
-                        args: args,
-                        io: io,
-                        async: cmd_async.is_some(),
-                    })
-                }
-                op => {
-                    if cmd_async.is_some() {
-                        Err(Error::Unexpected("&".into()))
-                    } else {
-                        Ok(op)
-                    }
-                }
-            }
-        })
-        .parse_state(input)
-}
-
-fn assignment<I>(input: State<I>) -> primitives::ParseResult<Op, I>
+fn assignment<I>(input: I) -> primitives::ParseResult<CmdPrefix, I>
 where I: Stream<Item=AST> {
     try(satisfy(|t| is_match!(t, AST::String(_)))
         .skip(token(AST::Eql)))
         .and(parser(word::<I>))
         .map(|(lhs, rhs)| {
-            Op::EqlStmt {
+            CmdPrefix::Assignment {
                 lhs: to_value(lhs).unwrap(),
                 rhs: to_value(rhs).unwrap()
             }
         })
-    .parse_state(input)
+    .parse_stream(input)
+}
+
+fn command<I>(input: I) -> primitives::ParseResult<Op, I>
+where I: Stream<Item=AST> {
+    let cmd_prefix = many1(choice![
+         parser(io_redirect::<I>),
+         parser(assignment::<I>)
+    ].skip(ws()));
+    let cmd_word = || parser(word::<I>).skip(ws());
+
+    (cmd_prefix.and(many(cmd_word())))
+     .or(many1(cmd_word()).map(|w| (vec![], w)))
+    // TODO redirects and args can be interleaved
+    .and(many(parser(io_redirect::<I>).skip(ws())))
+    .map(|((cmd_prefix, cmd_args), redirect_suffix): ((Vec<CmdPrefix>, Vec<AST>), Vec<CmdPrefix>)| {
+        let mut prog = None;
+        let mut args: Vec<String> = Vec::new();
+        let mut string_args: Vec<String> = cmd_args
+            .into_iter()
+            .map(|a| to_value(a).unwrap_or(String::new()))
+            .collect();
+        if string_args.len() > 0 {
+            prog = Some(string_args.remove(0));
+            args = string_args;
+        }
+        let (env, io) = cmd_prefix.into_iter().partition(|r| is_match!(r, &CmdPrefix::Assignment { .. }));
+        Op::Cmd {
+            prog: prog,
+            args: args,
+            env: env,
+            io: io.into_iter().chain(redirect_suffix).collect(),
+        }
+    })
+    .parse_stream(input)
 }
 
 fn ws<I>() -> Optional<Token<I>> where I: Stream<Item=AST> {
     optional(token(AST::Whitespace))
 }
 
-fn piped<I>(input: State<I>) -> primitives::ParseResult<Op, I>
+fn pipeline<I>(input: I) -> primitives::ParseResult<Pipeline, I>
 where I: Stream<Item=AST> {
     let cmd_chain = parser(command::<I>).map(|op| vec![op]);
     let pipe = token(AST::Pipe).map(|_t| return |mut lhs: Vec<Op>, mut rhs: Vec<Op>| {
@@ -196,61 +225,127 @@ where I: Stream<Item=AST> {
     chainl1(
         cmd_chain.skip(ws()),
         pipe.skip(ws()))
-        .map(|mut cmds| {
-            if cmds.len() == 1 {
-                return cmds.remove(0);
-            }
-
-            Op::Pipe {
-                cmds: cmds
+        .map(|cmds| {
+            Pipeline {
+                seq: cmds,
+                async: false,
+                bang: false,
             }
         })
-    .parse_state(input)
+    .parse_stream(input)
 }
 
-fn stmt<I>(input: State<I>) -> primitives::ParseResult<Op, I>
+fn and_or<I>(input: I) -> primitives::ParseResult<CommandList, I>
 where I: Stream<Item=AST> {
-    ws().with(choice(
-            vec![assignment::<I> as fn(State<I>) -> primitives::ParseResult<Op, I>, piped::<I>]))
-        .skip(ws())
-        .skip(not_followed_by(any()))
-        .parse_state(input)
+    chainl1(
+        parser(pipeline::<I>).map(CommandList::SimpleList),
+        choice([token(AST::And), token(AST::Or)]).map(|t: AST| move |l, r| {
+            if let CommandList::SimpleList(pipe) = r {
+                if t == AST::And {
+                    CommandList::AndList(Box::new(l), pipe)
+                } else {
+                    CommandList::OrList(Box::new(l), pipe)
+                }
+            } else {
+                unreachable!()
+            }
+        }))
+        .parse_stream(input)
 }
 
+fn newline_list<I>() -> Many1<Vec<AST>, Token<I>>
+where I: Stream<Item=AST> {
+    many1(token(AST::LineBreak))
+}
 
-pub fn parse(mut tokens: Vec<AST>, user_env: &UserEnv, heredocs: &mut Vec<String>) -> Result<Option<Op>, String> {
-    tokens = interpolate::expand(tokens, &user_env);
-    let result = try!(parser(stmt)
-        .parse(primitives::from_iter(tokens.iter().cloned()))
-        .map(|r| Some(r.0))
-        .or_else(|e| Err(format!("{:?}", e.errors))));
+fn linebreak<I>() -> Optional<Many1<Vec<AST>, Token<I>>>
+where I: Stream<Item=AST> {
+    optional(newline_list())
+}
 
-    fn populate_heredocs(cmd: &mut Op, heredocs: &mut Vec<String>) {
-        match cmd {
-            &mut Op::Pipe { ref mut cmds } => {
-                for mut c in cmds.iter_mut() {
-                    populate_heredocs(&mut c, heredocs);
-                }
-            },
-            &mut Op::Cmd { ref mut io, .. } => {
-                for ios in io.iter_mut() {
-                    if let &mut (_, Redir::Temp(ref mut contents)) = ios {
-                        if let Some(hd) = heredocs.pop() {
-                            *contents = hd;
-                        } else {
-                            unreachable!("Not enough heredocs were specified");
-                        }
-                    }
-                }
-            },
-            _ => {},
+fn complete_command<I>(input: I) -> primitives::ParseResult<CompleteCommand, I>
+where I: Stream<Item=AST> {
+    let separator_op = || choice![token(AST::Semi), token(AST::Async)];
+    let separator = (separator_op().skip(linebreak()))
+        .or(newline_list().map(|_| AST::LineBreak))
+        .skip(ws());
+
+    fn process_sep(sep: AST, cmd: &mut CompleteCommand) -> () {
+        if sep == AST::Async {
+            let p: &mut Pipeline = match cmd.last_mut().unwrap() {
+                &mut CommandList::SimpleList(ref mut p) => p,
+                &mut CommandList::AndList(_, ref mut p) => p,
+                &mut CommandList::OrList(_, ref mut p) => p,
+            };
+            p.async = true;
         }
     }
 
-    Ok(result.map(|mut r| {
+    let list = parser(and_or).map(|p| vec![p])
+        .skip(ws())
+        .and(many(try(
+                    separator_op()
+                    .skip(ws())
+                    .and(parser(and_or).map(|p| vec![p])))))
+        .map(|(cmd, cmds): (CompleteCommand, Vec<(AST, CompleteCommand)>)| {
+            let mut c = cmd;
+            let mut new_cmds = Vec::new();
+            for (sep, cmd2) in cmds.into_iter() {
+                process_sep(sep, &mut c);
+                new_cmds.append(&mut c);
+                c = cmd2;
+            }
+            new_cmds.append(&mut c);
+            new_cmds
+        });
+
+    list.and(optional(separator))
+    .map(|(mut l, sep)| {
+        if let Some(s) = sep {
+            process_sep(s, &mut l);
+        }
+        l
+    })
+    .skip(eof())
+    .parse_stream(input)
+}
+
+pub fn parse(mut tokens: Vec<AST>, user_env: &UserEnv, heredocs: &mut Vec<String>) -> Result<CompleteCommand, String> {
+    tokens = interpolate::expand(tokens, &user_env);
+    let result = parser(complete_command)
+        .parse(State::new(primitives::from_iter(tokens.iter().cloned())))
+        .map(|r| r.0)
+        .or_else(|e| Err(format!("{}", e)))?;
+
+    fn populate_heredocs(cmds: &mut CommandList, heredocs: &mut Vec<String>) {
+        match cmds {
+            &mut CommandList::SimpleList(ref mut pipeline) => {
+                for cmd in pipeline.seq.iter_mut() {
+                    match cmd {
+                        &mut Op::Cmd { ref mut io, .. } => {
+                            for ios in io.iter_mut() {
+                                if let &mut CmdPrefix::IORedirect { target: Redir::Temp(ref mut contents), .. } = ios {
+                                    if let Some(hd) = heredocs.pop() {
+                                        *contents = hd;
+                                    } else {
+                                        unreachable!("Not enough heredocs were specified");
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let populated = result.into_iter().map(|mut r| {
         populate_heredocs(&mut r, heredocs);
         r
-    }))
+    }).collect::<Vec<_>>();
+    Ok(populated)
 }
 
 #[cfg(test)]
@@ -261,150 +356,192 @@ mod tests {
     use input::tokenizer::tokenize;
     use super::*;
 
+    fn to_command_list(cmd: Op) -> CompleteCommand {
+        vec![CommandList::SimpleList(Pipeline {
+            seq: vec![cmd],
+            async: false,
+            bang: false,
+        })]
+    }
+
     #[test]
     fn parse_cmd_no_args() {
         let user_env = UserEnv::new();
         let input = tokenize("cmd").unwrap();
-        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
-        assert_eq!(cmd, Op::Cmd {
-            prog: "cmd".to_string(),
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap();
+        warn!("{:?}", cmd);
+        assert_eq!(cmd, to_command_list(Op::Cmd {
+            prog: Some("cmd".to_string()),
             args: Vec::new(),
             io: Vec::new(),
-            async: false,
-        });
+            env: Vec::new(),
+        }));
     }
 
     #[test]
     fn parse_cmd_multiple_args() {
         let user_env = UserEnv::new();
         let input = tokenize("cmd arg1 arg2").unwrap();
-        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
-        assert_eq!(cmd, Op::Cmd {
-            prog: "cmd".to_string(),
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap();
+        assert_eq!(cmd, to_command_list(Op::Cmd {
+            prog: Some("cmd".to_string()),
             args: vec!["arg1".to_string(), "arg2".to_string()],
             io: Vec::new(),
-            async: false,
-        });
+            env: Vec::new(),
+        }));
     }
 
     #[test]
     fn parse_cmd_with_string_arg() {
         let user_env = UserEnv::new();
         let input = tokenize(r#"cmd "arg1 $VAR arg2""#).unwrap();
-        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
-        assert_eq!(cmd, Op::Cmd {
-            prog: "cmd".to_string(),
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap();
+        assert_eq!(cmd, to_command_list(Op::Cmd {
+            prog: Some("cmd".to_string()),
             args: vec!["arg1  arg2".to_string()],
             io: Vec::new(),
-            async: false,
-        });
+            env: Vec::new(),
+        }));
     }
 
     #[test]
     fn parse_cmd_with_connected_args() {
         let user_env = UserEnv::new();
         let input = tokenize(r#"cmd arg1"arg2 arg3"$TEST'arg4 arg5'"#).unwrap();
-        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
-        assert_eq!(cmd, Op::Cmd {
-            prog: "cmd".to_string(),
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap();
+        assert_eq!(cmd, to_command_list(Op::Cmd {
+            prog: Some("cmd".to_string()),
             args: vec!["arg1arg2 arg3arg4 arg5".to_string()],
             io: Vec::new(),
-            async: false,
-        });
+            env: Vec::new(),
+        }));
     }
 
     #[test]
     fn parse_eql_stmt() {
         let user_env = UserEnv::new();
         let input = tokenize("FOO=bar").unwrap();
-        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
-        assert_eq!(cmd, Op::EqlStmt {
-            lhs: "FOO".to_string(),
-            rhs: "bar".to_string(),
-        });
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap();
+        assert_eq!(cmd, to_command_list(Op::Cmd {
+            prog: None,
+            args: Vec::new(),
+            io: Vec::new(),
+            env: vec![CmdPrefix::Assignment {
+                lhs: "FOO".to_string(),
+                rhs: "bar".to_string(),
+            }],
+        }));
     }
 
     #[test]
-    fn parse_eql_trailing_arg_fails() {
+    fn parse_eql_trailing_arg() {
         let user_env = UserEnv::new();
         let input = tokenize("FOO=bar baz").unwrap();
-        let cmd = parse(input, &user_env, &mut vec![]);
-        assert!(cmd.is_err());
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap();
+        assert_eq!(cmd, to_command_list(Op::Cmd {
+            prog: Some("baz".to_string()),
+            args: Vec::new(),
+            io: Vec::new(),
+            env: vec![CmdPrefix::Assignment {
+                lhs: "FOO".to_string(),
+                rhs: "bar".to_string(),
+            }],
+        }));
     }
 
     #[test]
     fn parse_pipe() {
         let user_env = UserEnv::new();
         let input = tokenize("cmd1 | cmd2 arg").unwrap();
-        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
-        assert_eq!(cmd, Op::Pipe {
-            cmds: vec![
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap();
+        assert_eq!(cmd, vec![CommandList::SimpleList(Pipeline {
+            seq: vec![
                 Op::Cmd {
-                    prog: "cmd1".to_string(),
+                    prog: Some("cmd1".to_string()),
                     args: Vec::new(),
                     io: Vec::new(),
-                    async: false,
+                    env: Vec::new(),
                 },
                 Op::Cmd {
-                    prog: "cmd2".to_string(),
+                    prog: Some("cmd2".to_string()),
                     args: vec!["arg".to_string()],
                     io: Vec::new(),
-                    async: false,
+                    env: Vec::new(),
                 }],
-        });
+            async: false,
+            bang: false,
+        })]);
     }
 
     #[test]
     fn parse_redir_out() {
         let user_env = UserEnv::new();
         let input = tokenize("cmd1 > file.txt >> log.txt 2>&1").unwrap();
-        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap();
         let write_flags = fcntl::O_WRONLY | fcntl::O_CREAT;
         let trunc_flags = write_flags | fcntl::O_TRUNC;
         let append_flags = write_flags | fcntl::O_APPEND;
-        assert_eq!(cmd, Op::Cmd {
-            prog: "cmd1".to_string(),
+        assert_eq!(cmd, to_command_list(Op::Cmd {
+            prog: Some("cmd1".to_string()),
             args: Vec::new(),
             io: vec![
-                (STDOUT_FILENO, Redir::File("file.txt".to_string(), trunc_flags)),
-                (STDOUT_FILENO, Redir::File("log.txt".to_string(), append_flags)),
-                (2, Redir::Copy(1)),
+                CmdPrefix::IORedirect {
+                    fd: STDOUT_FILENO,
+                    target: Redir::File("file.txt".to_string(), trunc_flags)
+                },
+                CmdPrefix::IORedirect {
+                    fd: STDOUT_FILENO,
+                    target: Redir::File("log.txt".to_string(), append_flags)
+                },
+                CmdPrefix::IORedirect {
+                    fd: 2,
+                    target: Redir::Copy(1)
+                },
             ],
-            async: false,
-        })
+            env: Vec::new(),
+        }));
     }
 
     #[test]
     fn parse_redir_in() {
         let user_env = UserEnv::new();
         let input = tokenize("cmd1 < file.txt <&3").unwrap();
-        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap();
         let read_flags = fcntl::O_RDONLY;
-        assert_eq!(cmd, Op::Cmd {
-            prog: "cmd1".to_string(),
+        assert_eq!(cmd, to_command_list(Op::Cmd {
+            prog: Some("cmd1".to_string()),
             args: Vec::new(),
             io: vec![
-                (STDIN_FILENO, Redir::File("file.txt".to_string(), read_flags)),
-                (STDIN_FILENO, Redir::Copy(3)),
+                CmdPrefix::IORedirect {
+                    fd: STDIN_FILENO,
+                    target: Redir::File("file.txt".to_string(), read_flags)
+                },
+                CmdPrefix::IORedirect {
+                    fd: STDIN_FILENO,
+                    target: Redir::Copy(3)
+                },
             ],
-            async: false,
-        })
+            env: Vec::new(),
+        }));
     }
 
     #[test]
     fn parse_redir_prefix() {
         let user_env = UserEnv::new();
         let input = tokenize("> file.txt cmd1").unwrap();
-        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap();
         let write_flags = fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_TRUNC;
-        assert_eq!(cmd, Op::Cmd {
-            prog: "cmd1".to_string(),
+        assert_eq!(cmd, to_command_list(Op::Cmd {
+            prog: Some("cmd1".to_string()),
             args: Vec::new(),
             io: vec![
-                (STDOUT_FILENO, Redir::File("file.txt".to_string(), write_flags)),
+                CmdPrefix::IORedirect {
+                    fd: STDOUT_FILENO,
+                    target: Redir::File("file.txt".to_string(), write_flags)
+                },
             ],
-            async: false,
-        })
+            env: Vec::new(),
+        }));
     }
 
     #[test]
@@ -412,27 +549,62 @@ mod tests {
         let user_env = UserEnv::new();
         let input = tokenize("cmd <<EOF").unwrap();
         let contents: String = "contents".into();
-        let cmd = parse(input, &user_env, &mut vec![contents.clone()]).unwrap().unwrap();
-        assert_eq!(cmd, Op::Cmd {
-            prog: "cmd".into(),
+        let cmd = parse(input, &user_env, &mut vec![contents.clone()]).unwrap();
+        assert_eq!(cmd, to_command_list(Op::Cmd {
+            prog: Some("cmd".into()),
             args: Vec::new(),
             io: vec![
-                (STDIN_FILENO, Redir::Temp(contents)),
+                CmdPrefix::IORedirect {
+                    fd: STDIN_FILENO,
+                    target: Redir::Temp(contents)
+                },
             ],
-            async: false,
-        })
+            env: Vec::new(),
+        }));
     }
 
     #[test]
     fn async_command() {
         let user_env = UserEnv::new();
         let input = tokenize("cmd &").unwrap();
-        let cmd = parse(input, &user_env, &mut vec![]).unwrap().unwrap();
-        assert_eq!(cmd, Op::Cmd {
-            prog: "cmd".into(),
-            args: Vec::new(),
-            io: vec![],
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap();
+
+        assert_eq!(cmd, vec![CommandList::SimpleList(Pipeline {
+            seq: vec![Op::Cmd {
+                prog: Some("cmd".into()),
+                args: Vec::new(),
+                io: Vec::new(),
+                env: Vec::new(),
+            }],
             async: true,
-        })
+            bang: false,
+        })]);
+    }
+
+    #[test]
+    fn semi_separated() {
+        let user_env = UserEnv::new();
+        let input = tokenize("cmd1; cmd2").unwrap();
+        let cmd = parse(input, &user_env, &mut vec![]).unwrap();
+
+        assert_eq!(cmd, vec![CommandList::SimpleList(Pipeline {
+            seq: vec![Op::Cmd {
+                prog: Some("cmd1".into()),
+                args: Vec::new(),
+                io: Vec::new(),
+                env: Vec::new(),
+            }],
+            async: false,
+            bang: false,
+        }), CommandList::SimpleList(Pipeline {
+            seq: vec![Op::Cmd {
+                prog: Some("cmd2".into()),
+                args: Vec::new(),
+                io: Vec::new(),
+                env: Vec::new(),
+            }],
+            async: false,
+            bang: false,
+        })]);
     }
 }

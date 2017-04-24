@@ -32,17 +32,22 @@ impl RedirOp {
 
 #[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
 pub enum AST {
+    // Semantically important
+    LineBreak,
+    // Not semantically important
     Whitespace,
+
     String(String),
     Quoted(Vec<AST>),
     Var(String),
     Eql,
-    Pipe,
     Redir(Option<i32>, RedirOp),
-    Async,
 
-    // Not implemented yet, but included for clarity
-    LogicalAnd,
+    Semi,
+    Async,
+    And,
+    Pipe,
+    Or,
 }
 
 impl Display for AST {
@@ -113,6 +118,7 @@ fn ws_tok(reader: &mut CharReader) -> ASTResult {
     let mut has_ws = false;
     loop {
         match reader.current {
+            Some('\n') => accept!(reader, AST::LineBreak),
             Some(c) if c.is_whitespace() => {
                 has_ws = true;
                 reader.advance();
@@ -142,8 +148,8 @@ fn eql_tok(reader: &mut CharReader) -> ASTResult {
     char_tok(reader, '=', AST::Eql)
 }
 
-fn pipe_tok(reader: &mut CharReader) -> ASTResult {
-    char_tok(reader, '|', AST::Pipe)
+fn semi_tok(reader: &mut CharReader) -> ASTResult {
+    char_tok(reader, ';', AST::Semi)
 }
 
 fn redir_tok(reader: &mut CharReader) -> ASTResult {
@@ -183,9 +189,23 @@ fn amp_tok(reader: &mut CharReader) -> ASTResult {
 
     reader.advance();
     match reader.current {
-        Some('&') => accept!(reader, AST::LogicalAnd),
+        Some('&') => accept!(reader, AST::And),
         _ => {
             return Ok(Some(AST::Async))
+        }
+    }
+}
+
+fn pipe_tok(reader: &mut CharReader) -> ASTResult {
+    if !is_match!(reader.current, Some('|')) {
+        return Ok(None);
+    }
+
+    reader.advance();
+    match reader.current {
+        Some('|') => accept!(reader, AST::Or),
+        _ => {
+            return Ok(Some(AST::Pipe))
         }
     }
 }
@@ -354,6 +374,7 @@ pub fn tokenize(s: &str) -> Result<Vec<AST>, ASTError> {
         eql_tok,
         pipe_tok,
         amp_tok,
+        semi_tok,
     );
 
     tokenize_loop(&mut reader, tokenizers, |reader| reader.current)
