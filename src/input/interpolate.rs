@@ -1,10 +1,10 @@
 use env::UserEnv;
 use std::env;
-use super::tokenizer::AST;
+use super::token::Token;
 
-fn expand_arg(arg: AST, user_env: &UserEnv) -> AST {
+fn expand_arg(arg: Token, user_env: &UserEnv) -> Token {
     match arg {
-        AST::Var(v) => {
+        Token::Var(v) => {
             let s = user_env.vars
                 .get(&v)
                 .map(|value| value.clone())
@@ -12,17 +12,17 @@ fn expand_arg(arg: AST, user_env: &UserEnv) -> AST {
                     env::var(&v)
                     .unwrap_or(String::new())
                 });
-            return AST::String(s);
+            return Token::String(s);
         },
-        AST::Quoted(ts) => {
-            return AST::Quoted(expand(ts.to_owned(), user_env));
+        Token::Quoted(ts) => {
+            return Token::Quoted(expand(ts.to_owned(), user_env));
         },
         _ => {},
     };
     arg
 }
 
-pub fn expand(items: Vec<AST>, user_env: &UserEnv) -> Vec<AST> {
+pub fn expand(items: Vec<Token>, user_env: &UserEnv) -> Vec<Token> {
     items.into_iter().map(|arg| expand_arg(arg, user_env)).collect()
 }
 
@@ -31,7 +31,7 @@ mod tests {
     use env::UserEnv;
     use std::env;
     use super::*;
-    use input::tokenizer::AST;
+    use input::token::Token;
 
     fn make_test_env() -> UserEnv {
         let mut user_env = UserEnv::new();
@@ -43,26 +43,26 @@ mod tests {
     fn expand_env_var() {
         let user_env = make_test_env();
         env::set_var("test_var", "value");
-        let mut toks = vec![AST::Var("test_var".to_string())];
+        let mut toks = vec![Token::Var("test_var".to_string())];
         toks = expand(toks, &user_env);
-        assert_eq!(toks, vec![AST::String("value".to_string())]);
+        assert_eq!(toks, vec![Token::String("value".to_string())]);
     }
 
     #[test]
     fn expand_user_var() {
         let user_env = make_test_env();
-        let mut toks = vec![AST::Var("TEST".to_string())];
+        let mut toks = vec![Token::Var("TEST".to_string())];
         toks = expand(toks, &user_env);
-        assert_eq!(toks, vec![AST::String("value".to_string())]);
+        assert_eq!(toks, vec![Token::String("value".to_string())]);
     }
 
     #[test]
     fn expand_quoted() {
         let user_env = make_test_env();
-        let mut toks = vec![AST::Quoted(
-            vec![AST::Var("TEST".to_string())])];
+        let mut toks = vec![Token::Quoted(
+            vec![Token::Var("TEST".to_string())])];
         toks = expand(toks, &user_env);
-        assert_eq!(toks, vec![AST::Quoted(
-                vec![AST::String("value".to_string())])]);
+        assert_eq!(toks, vec![Token::Quoted(
+                vec![Token::String("value".to_string())])]);
     }
 }

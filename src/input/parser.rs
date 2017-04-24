@@ -1,11 +1,11 @@
 use combine::*;
-use combine::combinator::{Optional, Token, Many1};
+use combine::combinator::{self, Optional, Many1};
 use combine::primitives::{Stream, Positioner};
 use env::UserEnv;
 use super::interpolate;
 use libc::{STDOUT_FILENO, STDIN_FILENO};
 use nix::fcntl::{self, OFlag};
-use super::tokenizer::{AST, RedirOp};
+use super::token::{Token, RedirOp};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Redir {
@@ -57,21 +57,21 @@ pub enum CommandList {
 pub type CompleteCommand = Vec<CommandList>;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ASTPositioner(usize);
-impl Positioner for AST {
-    type Position = ASTPositioner;
+pub struct TokenPositioner(usize);
+impl Positioner for Token {
+    type Position = TokenPositioner;
 
-    fn start() -> ASTPositioner {
-        ASTPositioner(0)
+    fn start() -> TokenPositioner {
+        TokenPositioner(0)
     }
 
-    fn update(&self, p: &mut ASTPositioner) {
+    fn update(&self, p: &mut TokenPositioner) {
         p.0 += 1;
     }
 }
 
 use std::fmt;
-impl fmt::Display for ASTPositioner {
+impl fmt::Display for TokenPositioner {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Position {}", self.0)
     }
@@ -91,12 +91,12 @@ impl Positioner for Op {
     }
 }
 
-fn word<I>(input: I) -> primitives::ParseResult<AST, I>
-where I: Stream<Item=AST> {
+fn word<I>(input: I) -> primitives::ParseResult<Token, I>
+where I: Stream<Item=Token> {
     many1(satisfy(|t| match t {
-        AST::String(_) | AST::Quoted(_) | AST::Var(_) => true,
+        Token::String(_) | Token::Quoted(_) | Token::Var(_) => true,
         _ => false,
-    })).map(|arg: Vec<AST>| {
+    })).map(|arg: Vec<Token>| {
             let value = arg
             .into_iter()
             .fold(String::new(), |mut acc, a| {
@@ -105,15 +105,15 @@ where I: Stream<Item=AST> {
                 }
                 acc
             });
-            AST::String(value)
+            Token::String(value)
         })
         .parse_stream(input)
 }
 
-fn to_value(a: AST) -> Option<String> {
+fn to_value(a: Token) -> Option<String> {
     match a {
-        AST::String(s) => Some(s),
-        AST::Quoted(contents) => Some(contents.into_iter().fold(String::new(), |mut acc: String, t| {
+        Token::String(s) => Some(s),
+        Token::Quoted(contents) => Some(contents.into_iter().fold(String::new(), |mut acc: String, t| {
             let v = to_value(t);
             if v.is_none() {
                 return acc;
@@ -125,11 +125,11 @@ fn to_value(a: AST) -> Option<String> {
     }
 }
 
-fn build_io_redirect((redir, io_file): (AST, AST)) -> CmdPrefix {
+fn build_io_redirect((redir, io_file): (Token, Token)) -> CmdPrefix {
     let file_name = to_value(io_file).unwrap();
     let io_number;
     let redir_op;
-    if let AST::Redir(io_number_opt, op) = redir {
+    if let Token::Redir(io_number_opt, op) = redir {
         io_number = io_number_opt.unwrap_or(
             if op.is_out() { STDOUT_FILENO } else { STDIN_FILENO });
         redir_op = op;
@@ -153,8 +153,8 @@ fn build_io_redirect((redir, io_file): (AST, AST)) -> CmdPrefix {
 }
 
 fn io_redirect<I>(input: I) -> primitives::ParseResult<CmdPrefix, I>
-where I: Stream<Item=AST> {
-    satisfy(|t| is_match!(t, AST::Redir(..)))
+where I: Stream<Item=Token> {
+    satisfy(|t| is_match!(t, Token::Redir(..)))
          .skip(ws())
          .and(parser(word::<I>))
     .map(build_io_redirect)
@@ -162,9 +162,9 @@ where I: Stream<Item=AST> {
 }
 
 fn assignment<I>(input: I) -> primitives::ParseResult<CmdPrefix, I>
-where I: Stream<Item=AST> {
-    try(satisfy(|t| is_match!(t, AST::String(_)))
-        .skip(token(AST::Eql)))
+where I: Stream<Item=Token> {
+    try(satisfy(|t| is_match!(t, Token::String(_)))
+        .skip(token(Token::Eql)))
         .and(parser(word::<I>))
         .map(|(lhs, rhs)| {
             CmdPrefix::Assignment {
@@ -176,7 +176,7 @@ where I: Stream<Item=AST> {
 }
 
 fn command<I>(input: I) -> primitives::ParseResult<Op, I>
-where I: Stream<Item=AST> {
+where I: Stream<Item=Token> {
     let cmd_prefix = many1(choice![
          parser(io_redirect::<I>),
          parser(assignment::<I>)
@@ -187,7 +187,7 @@ where I: Stream<Item=AST> {
      .or(many1(cmd_word()).map(|w| (vec![], w)))
     // TODO redirects and args can be interleaved
     .and(many(parser(io_redirect::<I>).skip(ws())))
-    .map(|((cmd_prefix, cmd_args), redirect_suffix): ((Vec<CmdPrefix>, Vec<AST>), Vec<CmdPrefix>)| {
+    .map(|((cmd_prefix, cmd_args), redirect_suffix): ((Vec<CmdPrefix>, Vec<Token>), Vec<CmdPrefix>)| {
         let mut prog = None;
         let mut args: Vec<String> = Vec::new();
         let mut string_args: Vec<String> = cmd_args
@@ -209,14 +209,14 @@ where I: Stream<Item=AST> {
     .parse_stream(input)
 }
 
-fn ws<I>() -> Optional<Token<I>> where I: Stream<Item=AST> {
-    optional(token(AST::Whitespace))
+fn ws<I>() -> Optional<combinator::Token<I>> where I: Stream<Item=Token> {
+    optional(token(Token::Whitespace))
 }
 
 fn pipeline<I>(input: I) -> primitives::ParseResult<Pipeline, I>
-where I: Stream<Item=AST> {
+where I: Stream<Item=Token> {
     let cmd_chain = parser(command::<I>).map(|op| vec![op]);
-    let pipe = token(AST::Pipe).map(|_t| return |mut lhs: Vec<Op>, mut rhs: Vec<Op>| {
+    let pipe = token(Token::Pipe).map(|_t| return |mut lhs: Vec<Op>, mut rhs: Vec<Op>| {
         // Remove the first argument so we can distinguish it as the command name
         lhs.push(rhs.remove(0));
         lhs
@@ -236,12 +236,12 @@ where I: Stream<Item=AST> {
 }
 
 fn and_or<I>(input: I) -> primitives::ParseResult<CommandList, I>
-where I: Stream<Item=AST> {
+where I: Stream<Item=Token> {
     chainl1(
         parser(pipeline::<I>).map(CommandList::SimpleList),
-        choice([token(AST::And), token(AST::Or)]).map(|t: AST| move |l, r| {
+        choice([token(Token::And), token(Token::Or)]).map(|t: Token| move |l, r| {
             if let CommandList::SimpleList(pipe) = r {
-                if t == AST::And {
+                if t == Token::And {
                     CommandList::AndList(Box::new(l), pipe)
                 } else {
                     CommandList::OrList(Box::new(l), pipe)
@@ -253,25 +253,25 @@ where I: Stream<Item=AST> {
         .parse_stream(input)
 }
 
-fn newline_list<I>() -> Many1<Vec<AST>, Token<I>>
-where I: Stream<Item=AST> {
-    many1(token(AST::LineBreak))
+fn newline_list<I>() -> Many1<Vec<Token>, combinator::Token<I>>
+where I: Stream<Item=Token> {
+    many1(token(Token::LineBreak))
 }
 
-fn linebreak<I>() -> Optional<Many1<Vec<AST>, Token<I>>>
-where I: Stream<Item=AST> {
+fn linebreak<I>() -> Optional<Many1<Vec<Token>, combinator::Token<I>>>
+where I: Stream<Item=Token> {
     optional(newline_list())
 }
 
 fn complete_command<I>(input: I) -> primitives::ParseResult<CompleteCommand, I>
-where I: Stream<Item=AST> {
-    let separator_op = || choice![token(AST::Semi), token(AST::Async)];
+where I: Stream<Item=Token> {
+    let separator_op = || choice![token(Token::Semi), token(Token::Async)];
     let separator = (separator_op().skip(linebreak()))
-        .or(newline_list().map(|_| AST::LineBreak))
+        .or(newline_list().map(|_| Token::LineBreak))
         .skip(ws());
 
-    fn process_sep(sep: AST, cmd: &mut CompleteCommand) -> () {
-        if sep == AST::Async {
+    fn process_sep(sep: Token, cmd: &mut CompleteCommand) -> () {
+        if sep == Token::Async {
             let p: &mut Pipeline = match cmd.last_mut().unwrap() {
                 &mut CommandList::SimpleList(ref mut p) => p,
                 &mut CommandList::AndList(_, ref mut p) => p,
@@ -287,7 +287,7 @@ where I: Stream<Item=AST> {
                     separator_op()
                     .skip(ws())
                     .and(parser(and_or).map(|p| vec![p])))))
-        .map(|(cmd, cmds): (CompleteCommand, Vec<(AST, CompleteCommand)>)| {
+        .map(|(cmd, cmds): (CompleteCommand, Vec<(Token, CompleteCommand)>)| {
             let mut c = cmd;
             let mut new_cmds = Vec::new();
             for (sep, cmd2) in cmds.into_iter() {
@@ -310,7 +310,7 @@ where I: Stream<Item=AST> {
     .parse_stream(input)
 }
 
-pub fn parse(mut tokens: Vec<AST>, user_env: &UserEnv, heredocs: &mut Vec<String>) -> Result<CompleteCommand, String> {
+pub fn parse(mut tokens: Vec<Token>, user_env: &UserEnv, heredocs: &mut Vec<String>) -> Result<CompleteCommand, String> {
     tokens = interpolate::expand(tokens, &user_env);
     let result = parser(complete_command)
         .parse(State::new(primitives::from_iter(tokens.iter().cloned())))

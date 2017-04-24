@@ -13,7 +13,8 @@ use env::UserEnv;
 use super::parser;
 use process::{self, BuiltinMap};
 use signals;
-use super::tokenizer::{self, AST, ASTError, RedirOp};
+use super::token::{Token, TokenError, RedirOp};
+use super::tokenizer;
 use util::write_err;
 
 static WAVE_EMOJI: &'static str = "\u{1F30A}";
@@ -39,12 +40,12 @@ pub fn input_loop(mut builtins: BuiltinMap) {
         } else {
             break;
         }
-        let tokens: Vec<AST> = match tokenizer::tokenize(&line) {
+        let tokens: Vec<Token> = match tokenizer::tokenize(&line) {
             Ok(tokens) => {
                 tokens
             },
             Err(e) => {
-                if e != ASTError::Unterminated {
+                if e != TokenError::Unterminated {
                     write_err(&format!("splash: {}", e));
                     line = String::new();
                 }
@@ -58,8 +59,8 @@ pub fn input_loop(mut builtins: BuiltinMap) {
         let mut i = 0;
         while i < tokens.len() {
             match tokens[i] {
-                AST::Redir(_, ref o@RedirOp::DLESS) | AST::Redir(_, ref o@RedirOp::DLESSDASH) => {
-                    if let AST::String(ref s) = tokens[i+1] {
+                Token::Redir(_, ref o@RedirOp::DLESS) | Token::Redir(_, ref o@RedirOp::DLESSDASH) => {
+                    if let Token::String(ref s) = tokens[i+1] {
                         here_docs.push((o.clone(), s.clone()));
                     } else {
                         write_err(&"splash: here docs must be strings".to_string());

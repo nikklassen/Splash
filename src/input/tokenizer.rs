@@ -1,4 +1,4 @@
-use std::fmt::{Display, Formatter, Error};
+use super::token::*;
 
 macro_rules! accept {
     ( $reader: ident, $ret_val: expr ) => {
@@ -6,74 +6,6 @@ macro_rules! accept {
     }
 }
 
-#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
-pub enum RedirOp {
-    LESS,
-    DLESS,
-    DLESSDASH,
-    LESSAND,
-    LESSGREAT,
-
-    GREAT,
-    DGREAT,
-    GREATAND,
-    CLOBBER,
-}
-
-impl RedirOp {
-    pub fn is_out(&self) -> bool {
-        match *self {
-            RedirOp::GREAT | RedirOp::DGREAT |
-                RedirOp::GREATAND | RedirOp::CLOBBER => true,
-            _ => false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
-pub enum AST {
-    // Semantically important
-    LineBreak,
-    // Not semantically important
-    Whitespace,
-
-    String(String),
-    Quoted(Vec<AST>),
-    Var(String),
-    Eql,
-    Redir(Option<i32>, RedirOp),
-
-    Semi,
-    Async,
-    And,
-    Pipe,
-    Or,
-}
-
-impl Display for AST {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        try!(write!(f, "{:?}", self));
-        Ok(())
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub enum ASTError {
-    Unterminated,
-    Unexpected(String),
-}
-
-impl Display for ASTError {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        match self {
-            &ASTError::Unterminated => try!(write!(f, "unterminated string")),
-            &ASTError::Unexpected(ref s) => try!(write!(f, "unexpected input: {}", s)),
-        }
-        Ok(())
-    }
-}
-
-type ASTResult = Result<Option<AST>, ASTError>;
 
 struct CharReader {
     source: Vec<char>,
@@ -114,18 +46,18 @@ impl CharReader {
     }
 }
 
-fn ws_tok(reader: &mut CharReader) -> ASTResult {
+fn ws_tok(reader: &mut CharReader) -> TokenResult {
     let mut has_ws = false;
     loop {
         match reader.current {
-            Some('\n') => accept!(reader, AST::LineBreak),
+            Some('\n') => accept!(reader, Token::LineBreak),
             Some(c) if c.is_whitespace() => {
                 has_ws = true;
                 reader.advance();
             }
             _ => {
                 return if has_ws {
-                    Ok(Some(AST::Whitespace))
+                    Ok(Some(Token::Whitespace))
                 } else {
                     Ok(None)
                 }
@@ -134,7 +66,7 @@ fn ws_tok(reader: &mut CharReader) -> ASTResult {
     }
 }
 
-fn char_tok(reader: &mut CharReader, token: char, tt: AST) -> ASTResult {
+fn char_tok(reader: &mut CharReader, token: char, tt: Token) -> TokenResult {
     if let Some(c) = reader.current {
         if token == c {
             reader.advance();
@@ -144,15 +76,15 @@ fn char_tok(reader: &mut CharReader, token: char, tt: AST) -> ASTResult {
     Ok(None)
 }
 
-fn eql_tok(reader: &mut CharReader) -> ASTResult {
-    char_tok(reader, '=', AST::Eql)
+fn eql_tok(reader: &mut CharReader) -> TokenResult {
+    char_tok(reader, '=', Token::Eql)
 }
 
-fn semi_tok(reader: &mut CharReader) -> ASTResult {
-    char_tok(reader, ';', AST::Semi)
+fn semi_tok(reader: &mut CharReader) -> TokenResult {
+    char_tok(reader, ';', Token::Semi)
 }
 
-fn redir_tok(reader: &mut CharReader) -> ASTResult {
+fn redir_tok(reader: &mut CharReader) -> TokenResult {
     match reader.current {
         Some('<') => {
             reader.advance();
@@ -160,63 +92,63 @@ fn redir_tok(reader: &mut CharReader) -> ASTResult {
                 Some('<') => {
                     reader.advance();
                     match reader.current {
-                        Some('-') => accept!(reader, AST::Redir(None, RedirOp::DLESSDASH)),
-                        _ => Ok(Some(AST::Redir(None, RedirOp::DLESS))),
+                        Some('-') => accept!(reader, Token::Redir(None, RedirOp::DLESSDASH)),
+                        _ => Ok(Some(Token::Redir(None, RedirOp::DLESS))),
                     }
                 },
-                Some('>') => accept!(reader, AST::Redir(None, RedirOp::LESSGREAT)),
-                Some('&') => accept!(reader, AST::Redir(None, RedirOp::LESSAND)),
-                _ => Ok(Some(AST::Redir(None, RedirOp::LESS))),
+                Some('>') => accept!(reader, Token::Redir(None, RedirOp::LESSGREAT)),
+                Some('&') => accept!(reader, Token::Redir(None, RedirOp::LESSAND)),
+                _ => Ok(Some(Token::Redir(None, RedirOp::LESS))),
             }
         },
         Some('>') => {
             reader.advance();
             match reader.current {
-                Some('>') => accept!(reader, AST::Redir(None, RedirOp::DGREAT)),
-                Some('|') => accept!(reader, AST::Redir(None, RedirOp::CLOBBER)),
-                Some('&') => accept!(reader, AST::Redir(None, RedirOp::GREATAND)),
-                _ => Ok(Some(AST::Redir(None, RedirOp::GREAT))),
+                Some('>') => accept!(reader, Token::Redir(None, RedirOp::DGREAT)),
+                Some('|') => accept!(reader, Token::Redir(None, RedirOp::CLOBBER)),
+                Some('&') => accept!(reader, Token::Redir(None, RedirOp::GREATAND)),
+                _ => Ok(Some(Token::Redir(None, RedirOp::GREAT))),
             }
         },
         _ => Ok(None),
     }
 }
 
-fn amp_tok(reader: &mut CharReader) -> ASTResult {
+fn amp_tok(reader: &mut CharReader) -> TokenResult {
     if !is_match!(reader.current, Some('&')) {
         return Ok(None);
     }
 
     reader.advance();
     match reader.current {
-        Some('&') => accept!(reader, AST::And),
+        Some('&') => accept!(reader, Token::And),
         _ => {
-            return Ok(Some(AST::Async))
+            return Ok(Some(Token::Async))
         }
     }
 }
 
-fn pipe_tok(reader: &mut CharReader) -> ASTResult {
+fn pipe_tok(reader: &mut CharReader) -> TokenResult {
     if !is_match!(reader.current, Some('|')) {
         return Ok(None);
     }
 
     reader.advance();
     match reader.current {
-        Some('|') => accept!(reader, AST::Or),
+        Some('|') => accept!(reader, Token::Or),
         _ => {
-            return Ok(Some(AST::Pipe))
+            return Ok(Some(Token::Pipe))
         }
     }
 }
 
-fn escaped_tok(reader: &mut CharReader) -> ASTResult {
+fn escaped_tok(reader: &mut CharReader) -> TokenResult {
     if let Some('\\') = reader.current {
         let prev: usize = reader.pos;
         reader.advance();
         if let Some(c) = reader.current {
             reader.advance();
-            return Ok(Some(AST::String(c.to_string())));
+            return Ok(Some(Token::String(c.to_string())));
         } else {
             reader.backtrack(prev);
             return Ok(None);
@@ -225,7 +157,7 @@ fn escaped_tok(reader: &mut CharReader) -> ASTResult {
     Ok(None)
 }
 
-fn lit_string_tok(reader: &mut CharReader) -> ASTResult {
+fn lit_string_tok(reader: &mut CharReader) -> TokenResult {
     if !is_match!(reader.current, Some('\'')) {
         return Ok(None)
     }
@@ -236,22 +168,22 @@ fn lit_string_tok(reader: &mut CharReader) -> ASTResult {
         if let Some(c) = reader.current {
             if c == '\'' {
                 reader.advance();
-                return Ok(Some(AST::String(contents)));
+                return Ok(Some(Token::String(contents)));
             }
             contents.push(c);
         } else {
-            return Err(ASTError::Unterminated);
+            return Err(TokenError::Unterminated);
         }
     }
 }
 
-fn quotemark_tok(reader: &mut CharReader) -> ASTResult {
+fn quotemark_tok(reader: &mut CharReader) -> TokenResult {
     if !is_match!(reader.current, Some('"')) {
         return Ok(None);
     }
 
     reader.advance();
-    let tokenizers: Vec<_> = vec![escaped_tok as fn(&mut CharReader) -> ASTResult, var_tok];
+    let tokenizers: Vec<_> = vec![escaped_tok as fn(&mut CharReader) -> TokenResult, var_tok];
     let tokens = try!(tokenize_loop(reader, tokenizers, |reader| {
         reader.current.and_then(|c| {
             if c == '"' {
@@ -264,13 +196,13 @@ fn quotemark_tok(reader: &mut CharReader) -> ASTResult {
 
     if let Some('"') = reader.current {
         reader.advance();
-        Ok(Some(AST::Quoted(tokens)))
+        Ok(Some(Token::Quoted(tokens)))
     } else {
-        Err(ASTError::Unterminated)
+        Err(TokenError::Unterminated)
     }
 }
 
-fn var_tok(reader: &mut CharReader) -> ASTResult {
+fn var_tok(reader: &mut CharReader) -> TokenResult {
     if !is_match!(reader.current, Some('$')) {
         return Ok(None);
     }
@@ -284,16 +216,16 @@ fn var_tok(reader: &mut CharReader) -> ASTResult {
             },
             _ => {
                 return if ident.is_empty() {
-                    Ok(Some(AST::String("$".to_string())))
+                    Ok(Some(Token::String("$".to_string())))
                 } else {
-                    Ok(Some(AST::Var(ident)))
+                    Ok(Some(Token::Var(ident)))
                 }
             },
         }
     }
 }
 
-fn num_tok(reader: &mut CharReader) -> ASTResult {
+fn num_tok(reader: &mut CharReader) -> TokenResult {
     if !is_match!(reader.current, Some(_)) {
         return Ok(None);
     }
@@ -315,12 +247,12 @@ fn num_tok(reader: &mut CharReader) -> ASTResult {
                 let redir = try!(redir_tok(reader));
                 let n = num.parse::<i32>().unwrap();
                 return match redir {
-                    Some(AST::Redir(_, op)) => Ok(Some(AST::Redir(Some(n), op))),
+                    Some(Token::Redir(_, op)) => Ok(Some(Token::Redir(Some(n), op))),
                     _ => unreachable!(),
                 };
             },
             _ => {
-                return Ok(Some(AST::String(num)));
+                return Ok(Some(Token::String(num)));
             },
         }
     }
@@ -328,11 +260,11 @@ fn num_tok(reader: &mut CharReader) -> ASTResult {
 
 fn tokenize_loop<F: Fn(&mut CharReader) -> Option<char>>(
     reader: &mut CharReader,
-    tokenizers: Vec<fn(&mut CharReader) -> ASTResult>,
+    tokenizers: Vec<fn(&mut CharReader) -> TokenResult>,
     loop_cond: F)
--> Result<Vec<AST>, ASTError> {
+-> Result<Vec<Token>, TokenError> {
 
-    let mut tokens = Vec::<AST>::new();
+    let mut tokens = Vec::<Token>::new();
     let mut word = String::new();
 
     while let Some(c) = loop_cond(reader) {
@@ -349,22 +281,22 @@ fn tokenize_loop<F: Fn(&mut CharReader) -> Option<char>>(
             reader.advance();
             continue;
         } else if !word.is_empty() {
-            tokens.push(AST::String(word.clone()));
+            tokens.push(Token::String(word.clone()));
             word.clear();
         }
         tokens.push(token.unwrap());
     }
     if !word.is_empty() {
-        tokens.push(AST::String(word.clone()));
+        tokens.push(Token::String(word.clone()));
     }
 
     Ok(tokens)
 }
 
-pub fn tokenize(s: &str) -> Result<Vec<AST>, ASTError> {
+pub fn tokenize(s: &str) -> Result<Vec<Token>, TokenError> {
     let mut reader = CharReader::new(s.to_string());
     let tokenizers: Vec<_> = vec!(
-        ws_tok as fn(&mut CharReader) -> ASTResult,
+        ws_tok as fn(&mut CharReader) -> TokenResult,
         escaped_tok,
         lit_string_tok,
         quotemark_tok,
@@ -384,8 +316,8 @@ pub fn tokenize(s: &str) -> Result<Vec<AST>, ASTError> {
 mod tests {
     use super::*;
 
-    fn to_string(s: &str) -> AST {
-        AST::String(s.to_string())
+    fn to_string(s: &str) -> Token {
+        Token::String(s.to_string())
     }
 
     #[test]
@@ -397,19 +329,19 @@ mod tests {
     #[test]
     fn parse_multiple_words() {
         let word = tokenize("hello world").unwrap();
-        assert_eq!(word, vec![to_string("hello"), AST::Whitespace, to_string("world")]);
+        assert_eq!(word, vec![to_string("hello"), Token::Whitespace, to_string("world")]);
     }
 
     #[test]
     fn parse_leading_ws() {
         let word = tokenize("    cmd").unwrap();
-        assert_eq!(word, vec![AST::Whitespace, to_string("cmd")]);
+        assert_eq!(word, vec![Token::Whitespace, to_string("cmd")]);
     }
 
     #[test]
     fn parse_trailing_ws() {
         let word = tokenize("cmd    ").unwrap();
-        assert_eq!(word, vec![to_string("cmd"), AST::Whitespace]);
+        assert_eq!(word, vec![to_string("cmd"), Token::Whitespace]);
     }
 
     #[test]
@@ -421,7 +353,7 @@ mod tests {
     #[test]
     fn parse_quotemark() {
         let t = tokenize(r#""hello world""#).unwrap();
-        assert_eq!(t, vec![AST::Quoted(
+        assert_eq!(t, vec![Token::Quoted(
                 vec![to_string("hello world")]
                 )]);
     }
@@ -429,7 +361,7 @@ mod tests {
     #[test]
     fn parse_string_with_escaped() {
         let t = tokenize(r#""hello \"""#).unwrap();
-        assert_eq!(t, vec![AST::Quoted(
+        assert_eq!(t, vec![Token::Quoted(
                 vec![to_string("hello "), to_string("\"")]
                 )]);
     }
@@ -455,7 +387,7 @@ mod tests {
     #[test]
     fn parse_var() {
         let t = tokenize("$ABC").unwrap();
-        assert_eq!(t, vec![AST::Var("ABC".to_string())]);
+        assert_eq!(t, vec![Token::Var("ABC".to_string())]);
     }
 
     #[test]
@@ -479,36 +411,36 @@ mod tests {
     #[test]
     fn parse_redirects() {
         let mut t = tokenize(">").unwrap();
-        assert_eq!(t, vec![AST::Redir(None, RedirOp::GREAT)]);
+        assert_eq!(t, vec![Token::Redir(None, RedirOp::GREAT)]);
 
         t = tokenize(">>").unwrap();
-        assert_eq!(t, vec![AST::Redir(None, RedirOp::DGREAT)]);
+        assert_eq!(t, vec![Token::Redir(None, RedirOp::DGREAT)]);
 
         t = tokenize(">&").unwrap();
-        assert_eq!(t, vec![AST::Redir(None, RedirOp::GREATAND)]);
+        assert_eq!(t, vec![Token::Redir(None, RedirOp::GREATAND)]);
 
         t = tokenize(">|").unwrap();
-        assert_eq!(t, vec![AST::Redir(None, RedirOp::CLOBBER)]);
+        assert_eq!(t, vec![Token::Redir(None, RedirOp::CLOBBER)]);
 
         t = tokenize("<").unwrap();
-        assert_eq!(t, vec![AST::Redir(None, RedirOp::LESS)]);
+        assert_eq!(t, vec![Token::Redir(None, RedirOp::LESS)]);
 
         t = tokenize("<<").unwrap();
-        assert_eq!(t, vec![AST::Redir(None, RedirOp::DLESS)]);
+        assert_eq!(t, vec![Token::Redir(None, RedirOp::DLESS)]);
 
         t = tokenize("<<-").unwrap();
-        assert_eq!(t, vec![AST::Redir(None, RedirOp::DLESSDASH)]);
+        assert_eq!(t, vec![Token::Redir(None, RedirOp::DLESSDASH)]);
 
         t = tokenize("<&").unwrap();
-        assert_eq!(t, vec![AST::Redir(None, RedirOp::LESSAND)]);
+        assert_eq!(t, vec![Token::Redir(None, RedirOp::LESSAND)]);
 
         t = tokenize("<>").unwrap();
-        assert_eq!(t, vec![AST::Redir(None, RedirOp::LESSGREAT)]);
+        assert_eq!(t, vec![Token::Redir(None, RedirOp::LESSGREAT)]);
     }
 
     #[test]
     fn parse_numbered_redirect() {
         let t = tokenize("3<").unwrap();
-        assert_eq!(t, vec![AST::Redir(Some(3), RedirOp::LESS)]);
+        assert_eq!(t, vec![Token::Redir(Some(3), RedirOp::LESS)]);
     }
 }
