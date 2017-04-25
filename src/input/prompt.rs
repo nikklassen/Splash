@@ -90,7 +90,7 @@ pub fn input_loop(mut builtins: BuiltinMap) {
             }
         }
 
-        let parsed = parser::parse(tokens, &user_env, &mut input);
+        let parsed = parser::parse(tokens, &mut input);
 
         if let Err(e) = parsed {
             write_err(&format!("splash: {}", e));

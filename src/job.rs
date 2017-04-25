@@ -241,11 +241,7 @@ pub fn add_job(p: &Process) -> Result<Job, String> {
         return Err("Empty process can't be jobbed".to_string());
     }
 
-    let mut cmd = p.prog.as_ref().unwrap().clone();
-    if p.args.len() > 0 {
-        cmd.push_str(" ");
-        cmd.push_str(&p.args.join(" "));
-    }
+    let cmd = format!("{}", p);
     let new_job = Job::new(p.pid, p.pgid, &cmd, p.async);
     JOB_TABLE.get_inner().add_job(new_job.clone());
 

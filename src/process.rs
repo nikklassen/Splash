@@ -16,7 +16,8 @@ use bindings::nix::tcsetpgrp;
 use env::UserEnv;
 use job;
 use file::Fd;
-use input::ast::{Op, Redir, CommandList, Pipeline, CmdPrefix};
+use input::ast::*;
+use interpolate;
 use signals;
 use util;
 
@@ -25,15 +26,15 @@ use util;
 pub struct Process {
     pub pid: i32,
     pub pgid: i32,
-    pub prog: Option<String>,
-    pub args: Vec<String>,
+    pub prog: Option<Word>,
+    pub args: Vec<Word>,
     pub io: Vec<(i32, Fd)>,
     pub async: bool,
     pub env: Vec<CmdPrefix>,
 }
 
 impl Process {
-    pub fn new(prog: Option<String>, args: Vec<String>, env: Vec<CmdPrefix>) -> Process {
+    pub fn new(prog: Option<Word>, args: Vec<Word>, env: Vec<CmdPrefix>) -> Process {
         Process {
             pid: 0,
             pgid: 0,
@@ -42,6 +43,30 @@ impl Process {
             io: Vec::new(),
             async: false,
             env: env,
+        }
+    }
+
+    /// Converts the `Word` value in the prog to a String
+    pub fn expand_prog(&self) -> Option<String> {
+        self.prog.as_ref().map(word_to_value)
+    }
+
+    /// Converts the `Word` value in each arg to a String
+    pub fn expand_args(&self) -> Vec<String> {
+        self.args.iter().map(word_to_value).collect()
+    }
+}
+
+use std::fmt;
+impl fmt::Display for Process {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let prog = self.expand_prog().unwrap_or(String::new());
+        if !self.args.is_empty() {
+            write!(f, "{} {}",
+                   prog,
+                   util::join_str(&self.expand_args(), " "))
+        } else {
+            write!(f, "{}", prog)
         }
     }
 }
@@ -65,13 +90,16 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: CommandList, user_env: 
 
     // TODO all threads need to be spawned then the last waited for
     // the all others subsequently killed if not done
-    for p in procs.iter_mut() {
+    for mut p in procs.iter_mut() {
         if p.prog.is_none() {
             update_env(p, user_env);
             continue;
         }
 
-        let builtin_entry = builtins.get_mut(p.prog.as_ref().unwrap());
+        // Interpolate parameters at the last possible moment
+        interpolate::expand(&mut p, user_env);
+
+        let builtin_entry = builtins.get_mut(&p.expand_prog().unwrap());
         if let Some(cmd) = builtin_entry {
             exec_builtin(p, cmd, pgid);
         } else {
@@ -80,7 +108,11 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: CommandList, user_env: 
         }
     }
 
-    let last_proc = procs.last().unwrap();
+    let last_proc;
+    match procs.iter().rev().find(|p| p.prog.is_some()) {
+        Some(p) => last_proc = p,
+        _ => return Ok(0),
+    }
     let ret;
     {
         let job = job::add_job(&last_proc)?;
@@ -114,9 +146,9 @@ macro_rules! str_vec {
 fn update_env(p: &Process, mut user_env: &mut UserEnv) {
     for assignment in p.env.iter() {
         if let &CmdPrefix::Assignment { ref lhs, ref rhs } = assignment {
-            let entry = user_env.vars.entry((*lhs).clone())
+            let entry = user_env.vars.entry(lhs.clone())
                 .or_insert(String::new());
-            *entry = (*rhs).clone();
+            *entry = word_to_value(rhs);
         }
     }
 }
@@ -127,7 +159,8 @@ fn add_redirects_to_io(io: &mut Vec<(i32, Fd)>, redirects: &Vec<CmdPrefix>) -> R
             let fd = match io_redirect {
                 &Redir::File(ref name, ref flags) => {
                     let mode = stat::S_IRUSR | stat::S_IWUSR | stat::S_IRGRP | stat::S_IROTH;
-                    let path = Path::new(name);
+                    let file_name = word_to_value(name);
+                    let path = Path::new(&file_name);
                     let file = try!(fcntl::open(path, *flags, mode).or_else(util::show_err));
                     Fd::new(file)
                 },
@@ -175,7 +208,7 @@ fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
         if has_input(&p.io) {
             util::write_err(&format!(
                 "splash: Ignoring piped input for {}; programs may not behave as expected.",
-                p.prog.as_ref().unwrap_or(&"assignment".to_string())));
+                p.expand_prog().unwrap_or("assignment".to_string())));
         }
         // insert at the front so these file descriptors will be overwritten by anything later
         p.io.insert(0, (STDOUT_FILENO, Fd::new(pipe_in)));
@@ -192,7 +225,7 @@ fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
         if num_procs > 1 && has_input(&last_proc.io) {
             util::write_err(&format!(
                 "splash: Ignoring piped input for {}; programs may not behave as expected.",
-                last_proc.prog.as_ref().unwrap_or(&"assignment".to_string())));
+                last_proc.expand_prog().unwrap_or("assignment".to_string())));
         }
         let stdout_dup = try!(Fd::dup(STDOUT_FILENO));
         last_proc.io.insert(0, (STDOUT_FILENO, stdout_dup));
@@ -266,7 +299,7 @@ where F: FnOnce() -> Result<i32, Error> {
 }
 
 fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: i32) {
-    let args: Vec<String> = process.args[..].iter().cloned().collect();
+    let args: Vec<String> = process.expand_args();
     let has_output = process.io.iter().find(|io_item| io_item.0 == STDOUT_FILENO).is_some();
     if !has_output {
         if let Err(e) = remap_fds(process) {
@@ -283,15 +316,15 @@ fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: i32) {
 }
 
 fn fork_proc(process: &mut Process, pgid: i32) {
-    let prog = process.prog.clone();
-    let args: Vec<String> = process.args.iter().cloned().collect();
+    let prog = process.expand_prog().unwrap();
+    let args = process.expand_args();
     fork_process(process, pgid, move || {
-        let args = &iter::once(prog.as_ref().unwrap())
-            .chain(args.iter())
+        let args = &iter::once(prog.clone())
+            .chain(args)
             .map(|s| CString::new(s.as_bytes()).unwrap())
             .collect::<Vec<_>>()[..];
 
-        let err = execvp(&CString::new(prog.as_ref().unwrap().as_bytes()).unwrap(), args).unwrap_err();
+        let err = execvp(&CString::new(prog.as_bytes()).unwrap(), args).unwrap_err();
 
         // Take bitwise NOT so we can differentiate an internal error
         // from the process legitimately exiting with that status

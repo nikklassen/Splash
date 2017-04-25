@@ -43,3 +43,15 @@ pub fn write_err<D: Display>(s: &D) {
 pub fn show_err<S, T: Debug>(e: T) -> Result<S, String> {
     Err(format!("{:?}", e))
 }
+
+pub fn join_str(vs: &Vec<String>, sep: &str) -> String {
+    let mut s = String::new();
+    for i in 0..vs.len()-1 {
+        s.push_str(&vs[i]);
+        s.push_str(sep);
+    }
+    vs.last().map(|v| {
+        s.push_str(&v)
+    });
+    s
+}

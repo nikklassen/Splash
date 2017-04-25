@@ -25,6 +25,7 @@ pub mod logger;
 pub mod process;
 pub mod signals;
 pub mod input;
+mod interpolate;
 
 #[allow(dead_code, non_camel_case_types)]
 mod bindings;

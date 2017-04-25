@@ -6,7 +6,7 @@ use super::token::{self, Token, RedirOp};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Redir {
     Copy(i32),
-    File(String, OFlag),
+    File(Word, OFlag),
     Temp(String),
 }
 
@@ -18,15 +18,15 @@ pub enum CmdPrefix {
     },
     Assignment {
         lhs: String,
-        rhs: String,
+        rhs: Word,
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
     Cmd {
-        prog: Option<String>,
-        args: Vec<String>,
+        prog: Option<Word>,
+        args: Vec<Word>,
         io: Vec<CmdPrefix>,
         env: Vec<CmdPrefix>,
     },
@@ -52,8 +52,7 @@ pub enum CommandList {
 
 pub type CompleteCommand = Vec<CommandList>;
 
-pub fn build_io_redirect((redir, io_file): (Token, Token)) -> CmdPrefix {
-    let file_name = token::to_value(io_file).unwrap();
+pub fn build_io_redirect((redir, io_file): (Token, Word)) -> CmdPrefix {
     let io_number;
     let redir_op;
     if let Token::Redir(io_number_opt, op) = redir {
@@ -63,14 +62,15 @@ pub fn build_io_redirect((redir, io_file): (Token, Token)) -> CmdPrefix {
     } else {
         unreachable!();
     }
+    let parse_fd = |fd| word_to_value(&fd).parse::<i32>().unwrap();
     let target = match redir_op {
-        RedirOp::LESS => Redir::File(file_name, fcntl::O_RDONLY),
-        RedirOp::LESSAND => Redir::Copy(file_name.parse::<i32>().unwrap()),
-        RedirOp::LESSGREAT => Redir::File(file_name, fcntl::O_RDWR | fcntl::O_CREAT),
+        RedirOp::LESS => Redir::File(io_file, fcntl::O_RDONLY),
+        RedirOp::LESSAND => Redir::Copy(parse_fd(io_file)),
+        RedirOp::LESSGREAT => Redir::File(io_file, fcntl::O_RDWR | fcntl::O_CREAT),
 
-        RedirOp::GREAT | RedirOp::CLOBBER => Redir::File(file_name, fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_TRUNC),
-        RedirOp::DGREAT => Redir::File(file_name, fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_APPEND),
-        RedirOp::GREATAND => Redir::Copy(file_name.parse::<i32>().unwrap()),
+        RedirOp::GREAT | RedirOp::CLOBBER => Redir::File(io_file, fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_TRUNC),
+        RedirOp::DGREAT => Redir::File(io_file, fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_APPEND),
+        RedirOp::GREATAND => Redir::Copy(parse_fd(io_file)),
         RedirOp::DLESS | RedirOp::DLESSDASH => Redir::Temp(String::new()),
     };
     CmdPrefix::IORedirect {
@@ -79,3 +79,34 @@ pub fn build_io_redirect((redir, io_file): (Token, Token)) -> CmdPrefix {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Word(pub Vec<Token>);
+
+pub fn word_to_value(w: &Word) -> String {
+    let mut val = String::new();
+    for part in w.0.iter() {
+        val.push_str(&token::to_value(part).unwrap_or(String::new()));
+    }
+    val
+}
+
+use std::fmt;
+impl fmt::Display for Word {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", word_to_value(&self))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn word_to_value_joins() {
+        let word = Word(vec![
+                        Token::String("a".to_string()),
+                        Token::String("b c".to_string())]);
+        let val = word_to_value(&word);
+        assert_eq!(val, "ab c".to_string());
+    }
+}

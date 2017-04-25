@@ -2,13 +2,15 @@ extern crate nix;
 extern crate tempfile;
 extern crate libc;
 
-use nix::sys::signal;
+use std::collections::HashMap;
 use std::env;
 use std::io::{Read, Write};
-use std::process::{Command, Output};
 use std::os::unix::process::ExitStatusExt;
+use std::process::{Command, Output};
 use std::thread;
 use std::time::Duration;
+
+use nix::sys::signal;
 use tempfile::NamedTempFile;
 
 #[allow(dead_code)]
@@ -17,23 +19,30 @@ fn print_extra_info(output: &Output) {
     println!("stderr: {}", String::from_utf8(output.stderr.clone()).unwrap());
 }
 
-fn set_env(cmd: &mut Command) -> &mut Command {
+fn set_build_dir(cmd: &mut Command) -> &mut Command {
     let build_dir = env::var("SPLASH_BUILD_DIR").unwrap_or(String::from("target/debug"));
     cmd.env("PATH", format!("/bin:/usr/bin:{}", build_dir))
 }
 
-fn run_in_splash(shell_cmd: &str) -> (i32, String) {
+fn run_in_splash_with_env(shell_cmd: &str, env: HashMap<String, String>) -> (i32, String) {
     let mut cmd = Command::new("sh");
     let _ = cmd.arg("-c")
         .arg(format!("echo \"{}\" | splash", shell_cmd));
 
-    set_env(&mut cmd);
+    set_build_dir(&mut cmd);
+    for (var, val) in env {
+        cmd.env(var, val);
+    }
 
     let output = cmd.output()
         .unwrap_or_else(|e| panic!("failed to execute process: {}", e));
 
     let stdout = String::from_utf8(output.stdout).unwrap();
     (output.status.code().unwrap(), stdout)
+}
+
+fn run_in_splash(shell_cmd: &str) -> (i32, String) {
+    run_in_splash_with_env(shell_cmd, HashMap::new())
 }
 
 #[test]
@@ -175,7 +184,7 @@ fn heredoc_in_no_whitespace() {
 #[test]
 fn no_stop_with_sigtstp() {
     let mut splash_cmd = Command::new("splash");
-    let mut splash = set_env(&mut splash_cmd).spawn().unwrap();
+    let mut splash = set_build_dir(&mut splash_cmd).spawn().unwrap();
 
     let pid = splash.id() as i32;
 
@@ -185,4 +194,15 @@ fn no_stop_with_sigtstp() {
 
     let status = splash.wait().unwrap();
     assert_eq!(status.signal().unwrap(), 9);
+}
+
+#[test]
+fn delayed_expansion_of_words() {
+    let mut env = HashMap::new();
+    env.insert("A".to_string(), "A".to_string());
+    let (ecode, output) = run_in_splash_with_env(
+        "A=B | echo \\$A",
+        env);
+    assert_eq!(ecode, 0);
+    assert_eq!(output, "B\n");
 }
