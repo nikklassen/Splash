@@ -9,7 +9,7 @@ use std::{iter, process};
 use libc::{STDOUT_FILENO, STDIN_FILENO};
 use nix::sys::stat;
 use nix::unistd::{self, ForkResult, execvp, getpid, setpgid, isatty};
-use nix::fcntl;
+use nix::fcntl::{self, OFlag};
 use tempfile::tempfile;
 
 use bindings::nix::tcsetpgrp;
@@ -21,6 +21,15 @@ use interpolate;
 use signals;
 use util;
 
+// The main reason for essentially recreating Redir here is because
+// we need to add the "Replace" condition.
+#[derive(Debug)]
+pub enum IOOp {
+    Duplicate(i32),
+    File(Word, OFlag),
+    FromString(String),
+    Replace(i32),
+}
 
 #[derive(Debug)]
 pub struct Process {
@@ -28,19 +37,32 @@ pub struct Process {
     pub pgid: i32,
     pub prog: Option<Word>,
     pub args: Vec<Word>,
-    pub io: Vec<(i32, Fd)>,
+    pub io: Vec<(i32, IOOp)>,
     pub async: bool,
     pub env: Vec<CmdPrefix>,
 }
 
 impl Process {
-    pub fn new(prog: Option<Word>, args: Vec<Word>, env: Vec<CmdPrefix>) -> Process {
+    pub fn new(prog: Option<Word>, args: Vec<Word>, env: Vec<CmdPrefix>, io: Vec<CmdPrefix>) -> Process {
+        let new_io: Vec<(i32, IOOp)> = io.into_iter().map(|prefix| {
+            if let CmdPrefix::IORedirect { fd, target } = prefix {
+                let op = match target {
+                    Redir::File(name, flags) => IOOp::File(name, flags),
+                    Redir::Copy(fd) => IOOp::Duplicate(fd),
+                    Redir::Temp(contents) => IOOp::FromString(contents),
+                };
+                (fd, op)
+            } else {
+                unreachable!()
+            }
+        }).collect();
+
         Process {
             pid: 0,
             pgid: 0,
             prog: prog,
             args: args,
-            io: Vec::new(),
+            io: new_io,
             async: false,
             env: env,
         }
@@ -153,28 +175,45 @@ fn update_env(p: &Process, mut user_env: &mut UserEnv) {
     }
 }
 
-fn add_redirects_to_io(io: &mut Vec<(i32, Fd)>, redirects: &Vec<CmdPrefix>) -> Result<(), String> {
-    for r in redirects {
-        if let &CmdPrefix::IORedirect { fd: ref io_number, target: ref io_redirect } = r {
-            let fd = match io_redirect {
-                &Redir::File(ref name, ref flags) => {
-                    let mode = stat::S_IRUSR | stat::S_IWUSR | stat::S_IRGRP | stat::S_IROTH;
-                    let file_name = word_to_value(name);
-                    let path = Path::new(&file_name);
-                    let file = try!(fcntl::open(path, *flags, mode).or_else(util::show_err));
-                    Fd::new(file)
-                },
-                &Redir::Copy(n) => try!(Fd::dup(n)),
-                &Redir::Temp(ref contents) => {
-                    let mut tmpfile = try!(tempfile()
-                        .or(Err("Could not create temporary file".to_string())));
-                    try!(tmpfile.write_all(contents.as_bytes()).or_else(util::show_err));
-                    try!(tmpfile.seek(SeekFrom::Start(0)).or_else(util::show_err));
-                    Fd::new(tmpfile.into_raw_fd())
-                },
-            };
-            io.push((*io_number, fd));
-        }
+fn add_redirects_to_io(io: &Vec<(i32, IOOp)>) -> Result<(), String> {
+    // Order of i/o operations matters, that's why we wait until now to do anything
+    // with them. For example "2> output >&2" should not output anything to stderr,
+    // which was happening before when >&2 was dupping stderr before it had been redirected.
+    for &(ref io_number, ref io_redirect) in io {
+        let mut fd = match io_redirect {
+            &IOOp::File(ref name, ref flags) => {
+                let mode = stat::S_IRUSR | stat::S_IWUSR | stat::S_IRGRP | stat::S_IROTH;
+                let file_name = word_to_value(name);
+                let path = Path::new(&file_name);
+                let file = try!(fcntl::open(path, *flags, mode).or_else(util::show_err));
+                let new_fd = Fd::new(file);
+                new_fd
+            },
+            &IOOp::Duplicate(fd) => {
+                if fd == *io_number {
+                    continue;
+                }
+                try!(Fd::dup(fd))
+            },
+            &IOOp::FromString(ref contents) => {
+                let mut tmpfile = try!(tempfile()
+                                       .or(Err("Could not create temporary file".to_string())));
+                try!(tmpfile.write_all(contents.as_bytes()).or_else(util::show_err));
+                try!(tmpfile.seek(SeekFrom::Start(0)).or_else(util::show_err));
+                Fd::new(tmpfile.into_raw_fd())
+            },
+            &IOOp::Replace(fd) => {
+                if fd == *io_number {
+                    continue;
+                }
+                Fd::new(fd)
+            }
+        };
+
+        let raw_fd = fd.raw_fd;
+        try!(unistd::dup2(raw_fd, *io_number)
+             .map_err(|_| format!("{}: bad file descriptor", raw_fd)));
+        fd.close();
     }
     Ok(())
 }
@@ -182,24 +221,19 @@ fn add_redirects_to_io(io: &mut Vec<(i32, Fd)>, redirects: &Vec<CmdPrefix>) -> R
 fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
     let cmds: Vec<Op> = pipeline.seq;
 
-    let mut procs: Vec<Process> = try!(util::sequence(cmds
-        .into_iter()
+    let mut procs: Vec<Process> = cmds.into_iter()
         .map(|cmd| {
             match cmd {
-                Op::Cmd { prog, args, io, env } => {
-                    let mut p = Process::new(prog, args, env);
-                    add_redirects_to_io(&mut p.io, &io)
-                        .and(Ok(p))
-                }
-                _ => unreachable!()
+                Op::Cmd { prog, args, io, env } => Process::new(prog, args, env, io),
+                _ => unreachable!(),
             }
         })
-        .collect()));
+        .collect();
 
     let num_procs = procs.len();
-    let mut prev_pipe_out = try!(Fd::dup(STDIN_FILENO));
+    let mut prev_pipe_out = IOOp::Duplicate(STDIN_FILENO);
 
-    let has_input = |io: &Vec<(i32, Fd)>| io.iter().find(|io_item| io_item.0 == STDIN_FILENO).is_some();
+    let has_input = |io: &Vec<(i32, IOOp)>| io.iter().find(|io_item| io_item.0 == STDIN_FILENO).is_some();
 
     for i in 0..(num_procs - 1) {
         let ref mut p = procs.index_mut(i);
@@ -211,10 +245,10 @@ fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
                 p.expand_prog().unwrap_or("assignment".to_string())));
         }
         // insert at the front so these file descriptors will be overwritten by anything later
-        p.io.insert(0, (STDOUT_FILENO, Fd::new(pipe_in)));
+        p.io.insert(0, (STDOUT_FILENO, IOOp::Replace(pipe_in)));
         p.io.insert(0, (STDIN_FILENO, prev_pipe_out));
 
-        prev_pipe_out = Fd::new(pipe_out);
+        prev_pipe_out = IOOp::Replace(pipe_out);
     }
 
     // End the borrow of procs before we return it
@@ -227,26 +261,13 @@ fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
                 "splash: Ignoring piped input for {}; programs may not behave as expected.",
                 last_proc.expand_prog().unwrap_or("assignment".to_string())));
         }
-        let stdout_dup = try!(Fd::dup(STDOUT_FILENO));
+        let stdout_dup = IOOp::Duplicate(STDOUT_FILENO);
         last_proc.io.insert(0, (STDOUT_FILENO, stdout_dup));
         last_proc.io.insert(0, (STDIN_FILENO, prev_pipe_out));
     }
     Ok(procs)
 }
 
-/// To be called after forking this function will reassign the file descriptors correctly for the
-/// child process
-fn remap_fds(process: &mut Process) -> Result<(), String> {
-    for &mut (io_number, ref mut fd) in process.io.iter_mut() {
-        let raw_fd = fd.raw_fd;
-        if io_number == raw_fd { continue };
-
-        try!(unistd::dup2(raw_fd, io_number)
-             .map_err(|_| format!("{}: bad file descriptor", raw_fd)));
-        fd.close();
-    }
-    Ok(())
-}
 
 fn fork_process<F>(process: &mut Process, mut pgid: i32, cmd: F)
 where F: FnOnce() -> Result<i32, Error> {
@@ -261,11 +282,14 @@ where F: FnOnce() -> Result<i32, Error> {
             process.pgid = pgid;
         }
 
-        for &mut (_io_number, ref mut fd) in process.io.iter_mut() {
-            fd.close();
+        // Close the child process's stdin/stdout fds
+        for &(_io_number, ref redir) in process.io.iter() {
+            if let &IOOp::Replace(ref fd) = redir {
+                Fd::new(*fd).close();
+            }
         }
     } else {
-        if let Err(e) = remap_fds(process) {
+        if let Err(e) = add_redirects_to_io(&process.io) {
             println!("Got error: {}", e);
             exit(1);
         }
@@ -302,7 +326,7 @@ fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: i32) {
     let args: Vec<String> = process.expand_args();
     let has_output = process.io.iter().find(|io_item| io_item.0 == STDOUT_FILENO).is_some();
     if !has_output {
-        if let Err(e) = remap_fds(process) {
+        if let Err(e) = add_redirects_to_io(&process.io) {
             println!("Got error: {}", e);
             return;
         }
