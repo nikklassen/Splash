@@ -23,7 +23,8 @@ fn getline(input_method: &mut InputReader, cont: bool) -> Option<String> {
             if res.is_err() || res.unwrap() == 0 {
                 None
             } else {
-                Some(s)
+                // read_line doesn't remove trailing '\n', we also don't want any trailing '\r's
+                Some(s.trim_right().to_string())
             }
         },
         &mut InputReader::Command(ref mut lines) => {
@@ -99,7 +100,7 @@ pub fn eval(mut input_reader: InputReader, mut builtins: BuiltinMap) {
                 } else {
                     // Replicate other shells' behaviour, just ignore this heredoc
                     error!("warning: here-document delimited by end-of-file (wanted `EOF')");
-                    content.clear();
+                    input.push(content);
                     break;
                 }
             }

@@ -31,6 +31,9 @@ pub fn getline(cont: bool) -> Option<String> {
             line.push_str(&s);
             break;
         } else {
+            if !cont {
+                info!("exit");
+            }
             return None;
         }
     }
@@ -69,7 +72,6 @@ lazy_static! {
 pub extern "C" fn readline_line_callback(line_raw: *const c_char) {
     *CURRENT_LINE.lock().unwrap() = if line_raw.is_null() {
         // ^D
-        println!("exit");
         None
     } else {
         let line_string;
