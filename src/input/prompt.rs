@@ -9,24 +9,14 @@ use libc::{self, STDIN_FILENO};
 use nix::unistd::isatty;
 
 use bindings::readline;
-use env::UserEnv;
-use super::parser;
-use process::{self, BuiltinMap};
 use signals;
-use super::token::{Token, TokenError, RedirOp};
-use super::tokenizer;
-use util::write_err;
 
 static WAVE_EMOJI: &'static str = "\u{1F30A}";
 
-pub fn input_loop(mut builtins: BuiltinMap) {
-    let mut user_env = UserEnv::new();
-
+pub fn getline(cont: bool) -> Option<String> {
     let mut line = String::new();
-    let mut last_status = 0;
     loop {
-        let cont = !line.is_empty();
-        if let Some(s) = getline(if cont {
+        if let Some(s) = readline(if cont {
             "\\ ".to_string()
         } else {
             get_prompt_string()
@@ -35,90 +25,19 @@ pub fn input_loop(mut builtins: BuiltinMap) {
                 continue;
             }
 
+            if !line.is_empty() {
+                line.push_str("\n");
+            }
             line.push_str(&s);
-            line.push_str("\n");
-        } else {
             break;
-        }
-        let tokens: Vec<Token> = match tokenizer::tokenize(&line) {
-            Ok(tokens) => {
-                tokens
-            },
-            Err(e) => {
-                if e != TokenError::Unterminated {
-                    write_err(&format!("splash: {}", e));
-                    line = String::new();
-                }
-                continue;
-            },
-        };
-        line = String::new();
-
-        let mut input: Vec<String> = Vec::new();
-        let mut here_docs: Vec<(RedirOp, String)> = Vec::new();
-        let mut i = 0;
-        while i < tokens.len() {
-            match tokens[i] {
-                Token::Redir(_, ref o@RedirOp::DLESS) | Token::Redir(_, ref o@RedirOp::DLESSDASH) => {
-                    if let Token::String(ref s) = tokens[i+1] {
-                        here_docs.push((o.clone(), s.clone()));
-                    } else {
-                        write_err(&"splash: here docs must be strings".to_string());
-                        continue;
-                    }
-                    i += 2;
-                },
-                _ => {
-                    i += 1;
-                },
-            }
-        }
-        for (kind, here_doc) in here_docs {
-            let mut content = String::new();
-            loop {
-                if let Some(mut s) = getline("\\ ") {
-                    if kind == RedirOp::DLESSDASH {
-                        s = s.chars().skip_while(|c| c.is_whitespace()).collect::<String>();
-                    }
-                    if s == here_doc {
-                        input.push(content);
-                        break;
-                    }
-                    content.push_str(&s);
-                    content.push_str("\n");
-                }
-            }
-        }
-
-        let parsed = parser::parse(tokens, &mut input);
-
-        if let Err(e) = parsed {
-            write_err(&format!("splash: {}", e));
-            continue;
-        }
-
-        let commands = parsed.unwrap();
-        if commands.is_empty() {
-            continue;
-        }
-
-        for command in commands {
-            let res = process::run_processes(&mut builtins, command, &mut user_env);
-            match res {
-                Err(e) => {
-                    write_err(&format!("splash: {}", e));
-                },
-                Ok(n) => {
-                    last_status = n;
-                },
-            };
+        } else {
+            return None;
         }
     }
-
-    process::exit(last_status);
+    Some(line)
 }
 
-fn getline<T>(prompt: T) -> Option<String>
+pub fn readline<T>(prompt: T) -> Option<String>
 where T: Into<String> {
     let res = isatty(STDIN_FILENO);
     // If stdin is closed

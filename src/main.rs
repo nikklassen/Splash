@@ -19,6 +19,7 @@ mod test_fixture;
 
 pub mod builtin;
 pub mod env;
+mod eval;
 pub mod file;
 pub mod job;
 pub mod logger;
@@ -30,10 +31,14 @@ mod interpolate;
 #[allow(dead_code, non_camel_case_types)]
 mod bindings;
 
+use std::fs::File;
+use std::io::BufReader;
+
 use getopts::Options;
 
-use signals::initialize_signals;
+use eval::InputReader;
 use process::BuiltinMap;
+use signals::initialize_signals;
 
 fn main() {
     use std::env;
@@ -41,7 +46,8 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     let mut opts = Options::new();
-    opts.optflag("V", "version", "show version information");
+    opts.optflag("V", "version", "show version information")
+        .optopt("c", "", "read input from command_string", "command_string");
 
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => { m }
@@ -52,6 +58,17 @@ fn main() {
         return;
     }
 
+    let input_method = if matches.opt_present("c") {
+        let command = matches.opt_str("c").unwrap();
+        InputReader::Command(command.lines().map(str::to_string).collect())
+    } else if !matches.free.is_empty() {
+        let file_name = &matches.free[0];
+        let reader = File::open(file_name).map(BufReader::new).unwrap();
+        InputReader::File(reader)
+    } else {
+        InputReader::Stdin
+    };
+
     let log_level = if cfg!(debug_assertions) {
         logger::LogLevel::Debug
     } else {
@@ -61,7 +78,7 @@ fn main() {
     logger::init("splash", log_level).unwrap();
 
     let builtins = initialize_term();
-    input::prompt::input_loop(builtins);
+    eval::eval(input_method, builtins);
 }
 
 fn initialize_term() -> BuiltinMap {
