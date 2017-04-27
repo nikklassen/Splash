@@ -43,6 +43,14 @@ use signals::initialize_signals;
 fn main() {
     use std::env;
 
+    let log_level = if cfg!(debug_assertions) {
+        logger::LogLevel::Debug
+    } else {
+        logger::LogLevel::Info
+    };
+    // TODO should be basename of args[0]
+    logger::init("splash", log_level).unwrap();
+
     let args: Vec<String> = env::args().collect();
 
     let mut opts = Options::new();
@@ -50,9 +58,13 @@ fn main() {
         .optopt("c", "", "read input from command_string", "command_string");
 
     let matches = match opts.parse(&args[1..]) {
-        Ok(m) => { m }
-        Err(f) => { panic!(f.to_string()) }
+        Ok(m) => m,
+        Err(f) => {
+            error!("{}", f);
+            ::std::process::exit(1);
+        },
     };
+
     if matches.opt_present("V") {
         print_version();
         return;
@@ -68,14 +80,6 @@ fn main() {
     } else {
         InputReader::Stdin
     };
-
-    let log_level = if cfg!(debug_assertions) {
-        logger::LogLevel::Debug
-    } else {
-        logger::LogLevel::Info
-    };
-    // TODO should be basename of args[0]
-    logger::init("splash", log_level).unwrap();
 
     let builtins = initialize_term();
     eval::eval(input_method, builtins);
