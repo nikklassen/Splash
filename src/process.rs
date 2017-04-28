@@ -11,7 +11,6 @@ use nix::unistd::{self, ForkResult, execvp, getpid, setpgid, isatty};
 use nix::fcntl::{self, OFlag};
 use tempfile::tempfile;
 
-use bindings::nix::tcsetpgrp;
 use builtin::{Builtin, BuiltinMap};
 use env::UserEnv;
 use job;
@@ -308,7 +307,7 @@ where F: FnOnce() -> Result<i32, Error> {
             }
             setpgid(pid, pgid).unwrap();
             if !process.async {
-                tcsetpgrp(STDIN_FILENO, pgid).unwrap();
+                unistd::tcsetpgrp(STDIN_FILENO, pgid).unwrap();
             }
 
             // Reset signals

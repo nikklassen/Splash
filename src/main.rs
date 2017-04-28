@@ -89,7 +89,6 @@ fn initialize_term() -> BuiltinMap {
     use libc::STDIN_FILENO;
     use nix::unistd;
     use nix::sys::signal;
-    use bindings::nix::{tcgetpgrp, tcsetpgrp, getpgrp};
 
     // See if we are running interactively
     let shell_terminal = STDIN_FILENO;
@@ -103,12 +102,9 @@ fn initialize_term() -> BuiltinMap {
     if interactive {
         // Loop until we are in the foreground.
         loop {
-            match getpgrp() {
-                Ok(id) => { shell_pgid = id; },
-                Err(_) => { continue; }
-            }
+            shell_pgid = unistd::getpgrp();
             let term_grp;
-            match tcgetpgrp(shell_terminal) {
+            match unistd::tcgetpgrp(shell_terminal) {
                 Ok(id) => { term_grp = id; },
                 Err(_) => { continue; }
             }
@@ -127,7 +123,7 @@ fn initialize_term() -> BuiltinMap {
         }
 
         // Grab control of the terminal
-        tcsetpgrp(shell_terminal, shell_pgid).unwrap();
+        unistd::tcsetpgrp(shell_terminal, shell_pgid).unwrap();
     }
 
     builtins

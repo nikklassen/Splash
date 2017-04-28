@@ -9,7 +9,6 @@ use nix::sys::signal;
 use nix::sys::wait::{self, WaitStatus};
 use nix::{self, unistd};
 
-use bindings::nix::{tcgetpgrp, tcsetpgrp, getpgrp};
 use process::Process;
 use util;
 
@@ -65,13 +64,14 @@ impl Job {
             Ok(WaitStatus::Signaled(_, sig, _)) => JobStatus::Done(128 + sig as i32),
             Ok(WaitStatus::Stopped(_, _)) => JobStatus::Stopped,
             Ok(WaitStatus::Continued(_)) => {
-                self.foreground = tcgetpgrp(STDIN_FILENO)
+                self.foreground = unistd::tcgetpgrp(STDIN_FILENO)
                     .and_then(|pgid| Ok(self.pgid == pgid))
                     .unwrap_or(false);
                 JobStatus::Running
             }
-            // Process is shy and doesn't want to say anything, that means no change
-            Ok(WaitStatus::StillAlive) | Err(_) => self.status,
+            // Process is shy and doesn't want to say anything (that means no change) or this failed for some reason
+            // (don't change anything)
+            Ok(WaitStatus::StillAlive) | Ok(WaitStatus::PtraceEvent(_, _, _)) | Err(_) => self.status,
         };
     }
 }
@@ -263,8 +263,8 @@ pub fn foreground_job(job: &Job) -> Result<i32, String> {
     if job.status == JobStatus::Running && job.foreground {
         return Err("Job is already in the foreground".to_string());
     }
-    let shell_pgid = try!(getpgrp().or_else(util::show_err));
-    try!(tcsetpgrp(STDIN_FILENO, job.pgid).or_else(util::show_err));
+    let shell_pgid = unistd::getpgrp();
+    try!(unistd::tcsetpgrp(STDIN_FILENO, job.pgid).or_else(util::show_err));
 
     if job.status == JobStatus::Stopped {
         resume_job(job)?;
@@ -272,7 +272,7 @@ pub fn foreground_job(job: &Job) -> Result<i32, String> {
 
     let ret = wait_for_job(job);
 
-    tcsetpgrp(STDIN_FILENO, shell_pgid).expect("Unable to foreground splash");
+    unistd::tcsetpgrp(STDIN_FILENO, shell_pgid).expect("Unable to foreground splash");
 
     ret
 }
@@ -345,6 +345,7 @@ fn join_job(job: &Job) -> JobStatus {
                 status = JobStatus::Stopped;
                 break;
             }
+            Ok(WaitStatus::PtraceEvent(_, _, _)) => continue,
             Err(nix::Error::Sys(nix::Errno::ECHILD)) => {
                 // This is bad, I don't know how we could get in this state
                 panic!("No child to wait for");
