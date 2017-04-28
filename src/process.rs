@@ -94,15 +94,27 @@ impl fmt::Display for Process {
 }
 
 pub fn run_processes(builtins: &mut BuiltinMap, command: CommandList, user_env: &mut UserEnv) -> Result<i32, String> {
-    // TODO multiple pipelines
     let pipeline = match command {
-        CommandList::AndList(_, p) => p,
-        CommandList::OrList(_, p) => p,
+        CommandList::AndList(prev, p) => {
+            let status = run_processes(builtins, *prev, user_env)?;
+            if status != 0 {
+                return Ok(status);
+            }
+            p
+        },
+        CommandList::OrList(prev, p) => {
+            let status = run_processes(builtins, *prev, user_env)?;
+            if status == 0 {
+                return Ok(status);
+            }
+            p
+        },
         CommandList::SimpleList(p) => p,
     };
 
     let mut procs = try!(pipeline_to_processes(pipeline).or_else(|e| Err(format!("{}", e))));
     let mut pgid = 0;
+    let mut builtin_result: Result<i32, String> = Ok(0);
 
     // TODO all threads need to be spawned then the last waited for
     // the all others subsequently killed if not done
@@ -118,7 +130,7 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: CommandList, user_env: 
 
         let builtin_entry = builtins.get_mut(&p.expand_prog().unwrap());
         if let Some(cmd) = builtin_entry {
-            exec_builtin(p, cmd, pgid, has_pipeline);
+            builtin_result = exec_builtin(p, cmd, pgid, has_pipeline);
         } else {
             fork_proc(p, pgid);
             pgid = p.pgid;
@@ -134,7 +146,7 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: CommandList, user_env: 
     {
         let job = job::add_job(&last_proc)?;
         ret = if job.pid == getpid() {
-            Ok(0)
+            builtin_result
         } else if !is_interactive() {
             job::wait_for_job(&job)
         } else if last_proc.async {
@@ -317,19 +329,21 @@ where F: FnOnce() -> Result<i32, Error> {
     }
 }
 
-fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: i32, has_pipeline: bool) {
+fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: i32, has_pipeline: bool) -> Result<i32, String> {
     let args: Vec<String> = process.expand_args();
     if !has_pipeline {
         if let Err(e) = add_redirects_to_io(&process.io) {
-            println!("Got error: {}", e);
-            return;
+            return Err(e);
         }
         process.pid = getpid();
-        let _ = cmd.run(&args[..]);
+        cmd.run(&args[..]).or_else(util::show_err)
     } else {
         fork_process(process, pgid, || {
             cmd.run(&args[..])
         });
+
+        // This result doesn't actually matter since the forked process will be waited for
+        Ok(0)
     }
 }
 

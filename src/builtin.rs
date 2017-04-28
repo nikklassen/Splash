@@ -136,6 +136,20 @@ impl Builtin for Jobs {
     }
 }
 
+struct True;
+impl Builtin for True {
+    fn run(&mut self, _args: &[String]) -> io::Result<i32> {
+        Ok(0)
+    }
+}
+
+struct False;
+impl Builtin for False {
+    fn run(&mut self, _args: &[String]) -> io::Result<i32> {
+        Ok(1)
+    }
+}
+
 macro_rules! add_builtins {
     ($map:ident, [ $( ($n:expr, $cmd:expr) ),* ] ) => {{
         $($map.insert(
@@ -155,7 +169,9 @@ pub fn init_builtins() -> BuiltinMap {
         ("pwd", Pwd),
         ("fg", Fg),
         ("bg", Bg),
-        ("jobs", Jobs)
+        ("jobs", Jobs),
+        ("true", True),
+        ("false", False)
         ]);
     builtins
 }

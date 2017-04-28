@@ -131,18 +131,22 @@ where I: Stream<Item=Token> {
 fn and_or<I>(input: I) -> primitives::ParseResult<CommandList, I>
 where I: Stream<Item=Token> {
     chainl1(
-        parser(pipeline::<I>).map(CommandList::SimpleList),
-        choice([token(Token::And), token(Token::Or)]).map(|t: Token| move |l, r| {
-            if let CommandList::SimpleList(pipe) = r {
-                if t == Token::And {
-                    CommandList::AndList(Box::new(l), pipe)
+        parser(pipeline::<I>).map(CommandList::SimpleList).skip(ws()),
+        choice([token(Token::And), token(Token::Or)])
+            .skip(ws())
+            .skip(linebreak())
+            .skip(ws())
+            .map(|t: Token| move |l, r| {
+                if let CommandList::SimpleList(pipe) = r {
+                    if t == Token::And {
+                        CommandList::AndList(Box::new(l), pipe)
+                    } else {
+                        CommandList::OrList(Box::new(l), pipe)
+                    }
                 } else {
-                    CommandList::OrList(Box::new(l), pipe)
+                    unreachable!()
                 }
-            } else {
-                unreachable!()
-            }
-        }))
+            }))
         .parse_stream(input)
 }
 

@@ -236,3 +236,31 @@ fn delayed_expansion_of_words() {
     assert_eq!(result.status, 0);
     assert_eq!(result.stdout, "B\n");
 }
+
+#[test]
+fn and_short_circuit() {
+    let result = run_in_splash("false && echo hi");
+    assert_eq!(result.status, 1);
+    assert_eq!(result.stdout, "");
+}
+
+#[test]
+fn and() {
+    let result = run_in_splash("true && echo hi");
+    assert_eq!(result.status, 0);
+    assert_eq!(result.stdout, "hi\n");
+}
+
+#[test]
+fn or_short_circuit() {
+    let result = run_in_splash("true || echo hi");
+    assert_eq!(result.status, 0);
+    assert_eq!(result.stdout, "");
+}
+
+#[test]
+fn or() {
+    let result = run_in_splash("false || echo hi");
+    assert_eq!(result.status, 0);
+    assert_eq!(result.stdout, "hi\n");
+}
