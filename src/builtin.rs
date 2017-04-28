@@ -5,10 +5,15 @@ use std::io::prelude::*;
 use std::io;
 use std::path::{PathBuf, Component, Path};
 
-use process::{Builtin, BuiltinMap};
 use job;
 
 const SUCCESS: io::Result<i32> = Ok(0);
+
+pub trait Builtin {
+    fn run(&mut self, args: &[String]) -> io::Result<i32>;
+}
+
+pub type BuiltinMap = HashMap<String, Box<Builtin>>;
 
 struct Cd {
     prev_dir: String,
@@ -159,8 +164,7 @@ pub fn init_builtins() -> BuiltinMap {
 mod tests {
     use std::{env, fs};
     use std::path::PathBuf;
-    use super::Cd;
-    use process::Builtin;
+    use super::*;
     use test_fixture::*;
 
     struct BuiltinTests {

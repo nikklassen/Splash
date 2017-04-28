@@ -1,10 +1,11 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
+use builtin::BuiltinMap;
 use env::UserEnv;
-use input::{prompt, parser, tokenizer};
 use input::token::*;
-use process::{self, BuiltinMap};
+use input::{prompt, parser, tokenizer};
+use process;
 use util::write_err;
 
 #[derive(Debug)]

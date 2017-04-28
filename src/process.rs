@@ -1,6 +1,5 @@
-use std::collections::HashMap;
 use std::ffi::CString;
-use std::io::{self, Write, Seek, SeekFrom, Error};
+use std::io::{Write, Seek, SeekFrom, Error};
 use std::ops::IndexMut;
 use std::os::unix::io::IntoRawFd;
 use std::path::Path;
@@ -13,6 +12,7 @@ use nix::fcntl::{self, OFlag};
 use tempfile::tempfile;
 
 use bindings::nix::tcsetpgrp;
+use builtin::{Builtin, BuiltinMap};
 use env::UserEnv;
 use job;
 use file::Fd;
@@ -93,12 +93,6 @@ impl fmt::Display for Process {
     }
 }
 
-pub trait Builtin {
-    fn run(&mut self, args: &[String]) -> io::Result<i32>;
-}
-
-pub type BuiltinMap = HashMap<String, Box<Builtin>>;
-
 pub fn run_processes(builtins: &mut BuiltinMap, command: CommandList, user_env: &mut UserEnv) -> Result<i32, String> {
     // TODO multiple pipelines
     let pipeline = match command {
@@ -112,6 +106,7 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: CommandList, user_env: 
 
     // TODO all threads need to be spawned then the last waited for
     // the all others subsequently killed if not done
+    let has_pipeline = procs.len() > 1;
     for mut p in procs.iter_mut() {
         if p.prog.is_none() {
             update_env(p, user_env);
@@ -123,7 +118,7 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: CommandList, user_env: 
 
         let builtin_entry = builtins.get_mut(&p.expand_prog().unwrap());
         if let Some(cmd) = builtin_entry {
-            exec_builtin(p, cmd, pgid);
+            exec_builtin(p, cmd, pgid, has_pipeline);
         } else {
             fork_proc(p, pgid);
             pgid = p.pgid;
@@ -322,10 +317,9 @@ where F: FnOnce() -> Result<i32, Error> {
     }
 }
 
-fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: i32) {
+fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: i32, has_pipeline: bool) {
     let args: Vec<String> = process.expand_args();
-    let has_output = process.io.iter().find(|io_item| io_item.0 == STDOUT_FILENO).is_some();
-    if !has_output {
+    if !has_pipeline {
         if let Err(e) = add_redirects_to_io(&process.io) {
             println!("Got error: {}", e);
             return;

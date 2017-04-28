@@ -37,7 +37,7 @@ use std::io::BufReader;
 use getopts::Options;
 
 use eval::InputReader;
-use process::BuiltinMap;
+use builtin::BuiltinMap;
 use signals::initialize_signals;
 
 fn main() {
