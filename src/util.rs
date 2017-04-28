@@ -2,7 +2,7 @@ use std::io::{self, Write};
 use std::fmt::{Display, Debug};
 use std::result;
 
-#[export_macro]
+#[macro_export]
 macro_rules! is_match {
     ($e: expr, $p: pat) => (
         if let $p = $e { true } else { false }
@@ -10,7 +10,7 @@ macro_rules! is_match {
 }
 
 // from http://stackoverflow.com/a/27582993
-#[export_macro]
+#[macro_export]
 macro_rules! hash_map(
     { $($key:expr => $value:expr,)+ } => {
         {

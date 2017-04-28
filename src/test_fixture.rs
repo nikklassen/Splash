@@ -6,7 +6,7 @@ lazy_static! {
     static ref TEST_LOCK: Mutex<u8> = Mutex::new(0);
 }
 
-#[export_macro]
+#[macro_export]
 macro_rules! test {
     ($name: expr, $func: ident) => {
         (String::from($name), Box::new(Self::$func))

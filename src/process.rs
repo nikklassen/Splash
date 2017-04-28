@@ -119,7 +119,7 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: CommandList, user_env: 
         }
 
         // Interpolate parameters at the last possible moment
-        interpolate::expand(&mut p, user_env);
+        interpolate::expand(&mut p, user_env)?;
 
         let builtin_entry = builtins.get_mut(&p.expand_prog().unwrap());
         if let Some(cmd) = builtin_entry {
