@@ -1,14 +1,61 @@
-use std::iter;
 use std::env;
 use std::ffi::{CString, CStr};
-use libc;
+use std::iter;
 
+use libc::{self, STDOUT_FILENO, STDIN_FILENO};
+use nix::unistd::{self, ForkResult};
+
+use builtin;
 use env::UserEnv;
+use eval::{self, InputReader};
+use file::Fd;
 use input::ast::*;
 use input::token::Token;
 use input::tokenizer::tokenize;
 use process::Process;
-use util;
+use signals;
+
+fn run_command(input: &str) -> String {
+    let (pipe_out, pipe_in) = unistd::pipe().unwrap();
+    let mut pout = Fd::new(pipe_out);
+    let mut pin = Fd::new(pipe_in);
+    let f = unistd::fork().unwrap();
+    if let ForkResult::Parent { .. } = f {
+        pin.close();
+
+        let mut output = String::new();
+        let mut buffer = [0u8; 256];
+        loop {
+            match unistd::read(pout.raw_fd, &mut buffer) {
+                Ok(0) => {
+                    break;
+                }
+                Ok(n) => {
+                    if let Ok(s) = String::from_utf8(buffer[..n].to_vec()) {
+                        output.push_str(&s);
+                    }
+                }
+                Err(e) => {
+                    error!("{:?}", e);
+                    break;
+                }
+            }
+        }
+        output
+    } else {
+        signals::cleanup_signals();
+
+        pout.close();
+        unistd::dup2(pin.raw_fd, STDOUT_FILENO).unwrap();
+        unistd::close(STDIN_FILENO).unwrap();
+
+        let command = InputReader::Command(input.lines().map(str::to_string).collect());
+        let builtins = builtin::init_builtins();
+        eval::eval(command, builtins);
+
+        unreachable!()
+    }
+}
 
 fn parameter_expansion(t: &String, user_env: &UserEnv) -> Result<String, String> {
     let mut s = String::new();
@@ -74,8 +121,8 @@ fn parameter_expansion(t: &String, user_env: &UserEnv) -> Result<String, String>
             // TODO arithmetic
             String::new()
         } else if to_expand.starts_with(&"$(") {
-            // TODO eval
-            String::new()
+            let input = &to_expand[2..to_expand.len() - 1];
+            run_command(input)
         } else if to_expand.starts_with(&"${") {
             let chars = to_expand.chars();
             let param_name: String = chars.clone()
@@ -187,7 +234,6 @@ fn quote_removal(word: &String) -> String {
 }
 
 fn expand_word(word: &String, user_env: &UserEnv, is_assignment: bool) -> Result<String, String> {
-    // TODO no path name expansion in double quotes
     let mut s = tilde_expansion(&word, is_assignment)?;
     s = parameter_expansion(&s, user_env)?;
     s = quote_removal(&s);
@@ -199,7 +245,7 @@ pub fn expand(p: &mut Process, user_env: &UserEnv) -> Result<(), String> {
         let expanded = expand_word(p.prog.as_ref().unwrap(), user_env, false)?;
         p.prog = Some(expanded);
     }
-    p.args = util::sequence(p.args.iter().map(|arg| expand_word(arg, user_env, false)).collect())?;
+    p.args = p.args.iter().map(|arg| expand_word(arg, user_env, false)).collect::<Result<_, _>>()?;
     for ref mut prefix in p.env.iter_mut() {
         if let &mut CmdPrefix::Assignment { ref mut rhs, .. } = *prefix {
             *rhs = expand_word(rhs, user_env, true)?;

@@ -215,7 +215,6 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
         }
     }
     if state == TokenState::OPERATOR {
-        println!("op: {}", token);
         let op = operator_table.get(token.as_str()).unwrap().clone();
         tokens.push(op);
     } else {

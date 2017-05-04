@@ -264,3 +264,10 @@ fn or() {
     assert_eq!(result.status, 0);
     assert_eq!(result.stdout, "hi\n");
 }
+
+#[test]
+fn expand_command() {
+    let result = run_in_splash("echo $(echo hi)");
+    assert_eq!(result.status, 0);
+    assert_eq!(result.stdout, "hi\n\n");
+}

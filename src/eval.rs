@@ -54,6 +54,7 @@ pub fn eval(mut input_reader: InputReader, mut builtins: BuiltinMap) {
 
         let (tokens, unterminated) = tokenizer::tokenize(&line, false);
         if unterminated {
+            line.push('\n');
             continue;
         }
         line = String::new();
