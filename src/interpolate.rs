@@ -173,8 +173,16 @@ fn tilde_expansion(s: &str, is_assignment: bool) -> Result<String, String> {
 }
 
 fn quote_removal(word: &String) -> String {
+    let mut escaped = false;
     word.chars()
-        .filter(|c| !(*c == '\'' || *c == '\"'))
+        .filter(|c| {
+            if escaped {
+                true
+            } else {
+                escaped = *c == '\\';
+                !(*c == '\'' || *c == '\"' || *c =='\\')
+            }
+        })
         .collect()
 }
 
@@ -333,11 +341,20 @@ mod tests {
 
     #[test]
     fn expand_parameter_single_digit() {
-        let user_env = make_test_env();
-        user_env.insert("0".to_string(), "A".to_string());
+        let mut user_env = make_test_env();
+        user_env.vars.insert("0".to_string(), "A".to_string());
         let toks = "$01".to_string();
-        let word = expand_word(&toks, &user_env, true);
+        let word = expand_word(&toks, &user_env, true).unwrap();
 
-        assert!(word, "A1".to_string());
+        assert_eq!(word, "A1".to_string());
+    }
+
+    #[test]
+    fn retain_escaped_dollar() {
+        let user_env = make_test_env();
+        let toks = "\\$TEST".to_string();
+        let word = expand_word(&toks, &user_env, true).unwrap();
+
+        assert_eq!(word, "$TEST".to_string());
     }
 }

@@ -82,7 +82,7 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
                 let lookahead = chars.peek().map(|c| *c);
                 if let Some(next) = lookahead {
                     match next {
-                        '$' | '`' | '"' | '\\' | '\n' => {
+                        '$' | '`' | '"' | '\\' | '\n' | '\'' => {
                             token.push(c);
                             chars.next();
                             c = next;
