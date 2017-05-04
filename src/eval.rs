@@ -52,7 +52,7 @@ pub fn eval(mut input_reader: InputReader, mut builtins: BuiltinMap) {
             break;
         }
 
-        let (tokens, unterminated) = tokenizer::tokenize(&line);
+        let (tokens, unterminated) = tokenizer::tokenize(&line, false);
         if unterminated {
             continue;
         }

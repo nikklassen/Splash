@@ -5,27 +5,32 @@ use libc;
 
 use env::UserEnv;
 use input::ast::*;
+use input::token::Token;
+use input::tokenizer::tokenize;
 use process::Process;
 use util;
 
-fn parameter_expansion(t: &String, user_env: &UserEnv) -> String {
+fn parameter_expansion(t: &String, user_env: &UserEnv) -> Result<String, String> {
     let mut s = String::new();
-    let mut chars = t.chars();
+    let mut chars = t.chars().peekable();
     let mut is_lit = false;
+    let mut escape = false;
     loop {
-        let mut next = chars.next();
-        match next {
+        match chars.next() {
             Some('$') => {
-                if is_lit {
+                if is_lit || escape {
+                    escape = false;
                     s.push('$');
                     continue;
                 }
                 // fall-through to variable evaluation
             },
             Some(c) => {
+                // TODO better quote handling
                 if c == '\'' {
                     is_lit = !is_lit;
                 }
+                escape = c == '\\';
                 s.push(c);
                 continue;
             },
@@ -34,12 +39,15 @@ fn parameter_expansion(t: &String, user_env: &UserEnv) -> String {
             },
         }
 
-        next = chars.next();
-        match next {
-            Some('{') => {
-                // TODO escaping of delimeter
-                let param_name: String = chars.by_ref().take_while(|c| *c != '}').collect();
-                chars.next();
+        let next = chars.peek().map(|c| *c);
+        if let Some(c) = next {
+            if c != '{' && c != '(' {
+                let param_name = if c.is_digit(10) {
+                    chars.next();
+                    c.to_string()
+                } else {
+                    chars.by_ref().take_while(|c| *c == '_' || c.is_alphanumeric()).collect()
+                };
                 let param = user_env.vars
                     .get(&param_name)
                     .map(|value| value.clone())
@@ -47,31 +55,55 @@ fn parameter_expansion(t: &String, user_env: &UserEnv) -> String {
                         env::var(&param_name)
                             .unwrap_or(String::new())
                     });
+
                 s.push_str(&param);
-            },
-            Some('(') => {
-                // TODO arithmetic
-                let command: String = chars.by_ref().take_while(|c| *c != ')').collect();
-                chars.next();
-                s.push_str(&command);
-            },
-            Some(c) => {
-                let param_name: String = iter::once(c).chain(chars.by_ref().take_while(|c| c.is_alphanumeric())).collect();
-                let param = user_env.vars
-                    .get(&param_name)
-                    .map(|value| value.clone())
-                    .unwrap_or_else(|| {
-                        env::var(&param_name)
-                            .unwrap_or(String::new())
-                    });
-                s.push_str(&param);
-            },
-            None => {
-                break;
-            },
+                continue;
+            }
         }
+
+        let rest: String = iter::once('$').chain(chars.clone()).collect();
+        let (tokens, _) = tokenize(&rest, true);
+        let to_expand = if let Some(&Token::Word(ref s)) = tokens.first() {
+            s.clone()
+        } else {
+            unreachable!()
+        };
+
+        let _ = chars.by_ref().skip(to_expand.len()).collect::<String>();
+        let result: String = if to_expand.starts_with(&"$((") {
+            // TODO arithmetic
+            String::new()
+        } else if to_expand.starts_with(&"$(") {
+            // TODO eval
+            String::new()
+        } else if to_expand.starts_with(&"${") {
+            let chars = to_expand.chars();
+            let param_name: String = chars.clone()
+                .skip(2)
+                .take_while(|c| *c == '_' || c.is_alphanumeric())
+                .collect();
+
+            let chars = chars.skip(param_name.len() + 2);
+            // Only character remaining should be the trailing }
+            if chars.count() > 1 {
+                // TODO more complicated variable manipulation
+                return Err("Bad substitution".to_string());
+            }
+
+            let param = user_env.vars
+                .get(&param_name)
+                .map(|value| value.clone())
+                .unwrap_or_else(|| {
+                    env::var(&param_name)
+                        .unwrap_or(String::new())
+                });
+            param
+        } else {
+            unreachable!()
+        };
+        s.push_str(&result);
     }
-    s
+    Ok(s)
 }
 
 fn get_user_home(name: &str) -> Option<String> {
@@ -149,7 +181,7 @@ fn quote_removal(word: &String) -> String {
 fn expand_word(word: &String, user_env: &UserEnv, is_assignment: bool) -> Result<String, String> {
     // TODO no path name expansion in double quotes
     let mut s = tilde_expansion(&word, is_assignment)?;
-    s = parameter_expansion(&s, user_env);
+    s = parameter_expansion(&s, user_env)?;
     s = quote_removal(&s);
     Ok(s)
 }
@@ -174,9 +206,13 @@ mod tests {
     use std::env;
     use super::*;
 
+    fn val() -> String {
+        "value".to_string()
+    }
+
     fn make_test_env() -> UserEnv {
         let mut user_env = UserEnv::new();
-        user_env.vars.insert("TEST".to_string(), "value".to_string());
+        user_env.vars.insert("TEST".to_string(), val());
         user_env
     }
 
@@ -204,7 +240,7 @@ mod tests {
         let user_env = make_test_env();
         let toks = "$TEST".to_string();
         let word = expand_word(&toks, &user_env, false).unwrap();
-        assert_eq!(word, "value".to_string());
+        assert_eq!(word, val());
     }
 
     #[test]
@@ -212,7 +248,7 @@ mod tests {
         let user_env = make_test_env();
         let toks = r#""$TEST""#.to_string();
         let word = expand_word(&toks, &user_env, false).unwrap();
-        assert_eq!(word, "value".to_string());
+        assert_eq!(word, val());
     }
 
     #[test]
@@ -275,5 +311,33 @@ mod tests {
         let word = expand_word(&toks, &user_env, true).unwrap();
 
         assert_eq!(word, "a:/root:b".to_string());
+    }
+
+    #[test]
+    fn expand_parameter() {
+        let user_env = make_test_env();
+        let toks = "${TEST}".to_string();
+        let word = expand_word(&toks, &user_env, true).unwrap();
+
+        assert_eq!(word, val());
+    }
+
+    #[test]
+    fn expand_parameter_no_parameter() {
+        let user_env = make_test_env();
+        let toks = "${!}".to_string();
+        let word = expand_word(&toks, &user_env, true);
+
+        assert!(word.is_err());
+    }
+
+    #[test]
+    fn expand_parameter_single_digit() {
+        let user_env = make_test_env();
+        user_env.insert("0".to_string(), "A".to_string());
+        let toks = "$01".to_string();
+        let word = expand_word(&toks, &user_env, true);
+
+        assert!(word, "A1".to_string());
     }
 }

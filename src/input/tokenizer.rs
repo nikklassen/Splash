@@ -21,7 +21,9 @@ fn add_token(mut tokens: &mut Vec<Token>, s: &str) {
     }
 }
 
-pub fn tokenize(input: &str) -> (Vec<Token>, bool) {
+/// tokenize the input string
+/// if `delimited` is true then tokenize one delimited structure, instead of multiple words
+pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
     let operator_table: HashMap<&str, Token> = hash_map!{
         "<" => Token::LESS,
         "<<" => Token::DLESS,
@@ -208,6 +210,9 @@ pub fn tokenize(input: &str) -> (Vec<Token>, bool) {
         if !skip_char {
             token.push(c);
         }
+        if delimited && arithmetic_nesting + command_nesting + param_nesting + quote_nesting == 0 {
+            break;
+        }
     }
     if state == TokenState::OPERATOR {
         println!("op: {}", token);
@@ -231,192 +236,192 @@ mod tests {
 
     #[test]
     fn tokenize_single_word() {
-        let (tokens, _) = tokenize("cmd");
+        let (tokens, _) = tokenize("cmd", false);
         assert_eq!(tokens, vec![word("cmd")]);
     }
 
     #[test]
     fn tokenize_multiple_words() {
-        let (tokens, _) = tokenize("hello world");
+        let (tokens, _) = tokenize("hello world", false);
         assert_eq!(tokens, vec![word("hello"), word("world")]);
     }
 
     #[test]
     fn tokenize_leading_ws() {
-        let (tokens, _) = tokenize("    cmd");
+        let (tokens, _) = tokenize("    cmd", false);
         assert_eq!(tokens, vec![word("cmd")]);
     }
 
     #[test]
     fn tokenize_trailing_ws() {
-        let (tokens, _) = tokenize("cmd    ");
+        let (tokens, _) = tokenize("cmd    ", false);
         assert_eq!(tokens, vec![word("cmd")]);
     }
 
     #[test]
     fn tokenize_escaped_ws() {
-        let (tokens, _) = tokenize(r#"hello\ world"#);
+        let (tokens, _) = tokenize(r#"hello\ world"#, false);
         assert_eq!(tokens, vec![word("hello world")]);
     }
 
     #[test]
     fn tokenize_empty_cmd() {
-        let (tokens, _) = tokenize("");
+        let (tokens, _) = tokenize("", false);
         assert_eq!(tokens, Vec::new());
     }
 
     #[test]
     fn tokenize_double_quote() {
         let input = r#""hello world""#;
-        let (t, _) = tokenize(input);
+        let (t, _) = tokenize(input, false);
         assert_eq!(t, vec![word(input)]);
     }
 
     #[test]
     fn tokenize_string_with_escaped() {
         let input = r#""hello \"""#;
-        let (t, _) = tokenize(input);
+        let (t, _) = tokenize(input, false);
         assert_eq!(t, vec![word(input)]);
     }
 
     #[test]
     fn tokenize_unterminated_double_quote() {
-        let (_, unterminated) = tokenize(r#""hello"#);
+        let (_, unterminated) = tokenize(r#""hello"#, false);
         assert!(unterminated);
     }
 
     #[test]
     fn tokenize_literal_string() {
         let input = "'hello world'";
-        let (t, _) = tokenize(input);
+        let (t, _) = tokenize(input, false);
         assert_eq!(t, vec![word(input)]);
     }
 
     #[test]
     fn tokenize_untermianted_single_quote() {
-        let (_, unterminated) = tokenize("'hello");
+        let (_, unterminated) = tokenize("'hello", false);
         assert!(unterminated);
     }
 
     #[test]
     fn tokenize_var() {
         let input = "$ABC";
-        let (t, _) = tokenize(input);
+        let (t, _) = tokenize(input, false);
         assert_eq!(t, vec![word(input)]);
     }
 
     #[test]
     fn tokenize_escaped_var() {
         let input = r#"\$ABC"#;
-        let (t, _) = tokenize(input);
+        let (t, _) = tokenize(input, false);
         assert_eq!(t, vec![word(input)]);
     }
 
     #[test]
     fn tokenize_escaped_string() {
         let input = r#"\"hello"#;
-        let (t, _) = tokenize(input);
+        let (t, _) = tokenize(input, false);
         assert_eq!(t, vec![word(input)]);
     }
 
     #[test]
     fn tokenize_number() {
-        let (t, _) = tokenize("123");
+        let (t, _) = tokenize("123", false);
         assert_eq!(t, vec![word("123")]);
     }
 
     #[test]
     fn tokenize_redirects() {
-        let (t, _) = tokenize(">");
+        let (t, _) = tokenize(">", false);
         assert_eq!(t, vec![Token::GREAT]);
 
-        let (t, _) = tokenize(">>");
+        let (t, _) = tokenize(">>", false);
         assert_eq!(t, vec![Token::DGREAT]);
 
-        let (t, _) = tokenize(">&");
+        let (t, _) = tokenize(">&", false);
         assert_eq!(t, vec![Token::GREATAND]);
 
-        let (t, _) = tokenize(">|");
+        let (t, _) = tokenize(">|", false);
         assert_eq!(t, vec![Token::CLOBBER]);
 
-        let (t, _) = tokenize("<");
+        let (t, _) = tokenize("<", false);
         assert_eq!(t, vec![Token::LESS]);
 
-        let (t, _) = tokenize("<<");
+        let (t, _) = tokenize("<<", false);
         assert_eq!(t, vec![Token::DLESS]);
 
-        let (t, _) = tokenize("<<-");
+        let (t, _) = tokenize("<<-", false);
         assert_eq!(t, vec![Token::DLESSDASH]);
 
-        let (t, _) = tokenize("<&");
+        let (t, _) = tokenize("<&", false);
         assert_eq!(t, vec![Token::LESSAND]);
 
-        let (t, _) = tokenize("<>");
+        let (t, _) = tokenize("<>", false);
         assert_eq!(t, vec![Token::LESSGREAT]);
     }
 
     #[test]
     fn tokenize_numbered_redirect() {
-        let (t, _) = tokenize("3<");
+        let (t, _) = tokenize("3<", false);
         assert_eq!(t, vec![Token::IONumber(3), Token::LESS]);
     }
 
     #[test]
     fn tokenize_parameter() {
-        let (t, _) = tokenize("A${B}C");
+        let (t, _) = tokenize("A${B}C", false);
         assert_eq!(t, vec![word("A${B}C")]);
     }
 
     #[test]
     fn tokenize_unterminated_parameter() {
-        let (_, unterminated) = tokenize("${A");
+        let (_, unterminated) = tokenize("${A", false);
         assert!(unterminated);
     }
 
     #[test]
     fn tokenize_command() {
         let input = "$(echo \"foo\")";
-        let (t, _) = tokenize(input);
+        let (t, _) = tokenize(input, false);
         assert_eq!(t, vec![word(input)]);
     }
 
     #[test]
     fn tokenize_unterminated_command() {
-        let (_, unterminated) = tokenize("$(A");
+        let (_, unterminated) = tokenize("$(A", false);
         assert!(unterminated);
     }
 
     #[test]
     fn tokenize_arithmetic() {
         let input = "$((1 + 1))";
-        let (t, _) = tokenize(input);
+        let (t, _) = tokenize(input, false);
         assert_eq!(t, vec![word(input)]);
     }
 
     #[test]
     fn tokenize_unterminated_arithmetic() {
-        let (_, unterminated) = tokenize("$((1");
+        let (_, unterminated) = tokenize("$((1", false);
         assert!(unterminated);
     }
 
     #[test]
     fn tokenize_parameter_in_command() {
         let input = "$(echo ${A} B)";
-        let (t, _) = tokenize(input);
+        let (t, _) = tokenize(input, false);
         assert_eq!(t, vec![word(input)]);
     }
 
     #[test]
     fn tokenize_comment() {
         let input = "# abc";
-        let (t, _) = tokenize(input);
+        let (t, _) = tokenize(input, false);
         assert_eq!(t, vec![Token::LineBreak]);
     }
 
     #[test]
     fn tokenize_line_continuation() {
         let input = r#"cmd \"#;
-        let (t, unterminated) = tokenize(input);
+        let (t, unterminated) = tokenize(input, false);
         assert!(unterminated);
         assert_eq!(t, vec![word("cmd")]);
     }

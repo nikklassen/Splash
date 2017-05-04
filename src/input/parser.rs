@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn parse_cmd_no_args() {
-        let input = tokenize("cmd").0;
+        let input = tokenize("cmd", false).0;
         let cmd = parse(input, &mut vec![]).unwrap();
         warn!("{:?}", cmd);
         assert_eq!(cmd, to_command_list(Op::Cmd {
@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn parse_cmd_multiple_args() {
-        let input = tokenize("cmd argA argB").0;
+        let input = tokenize("cmd argA argB", false).0;
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(cmd, to_command_list(Op::Cmd {
             prog: Some(to_word("cmd")),
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn parse_cmd_with_string_arg() {
-        let input = tokenize(r#"cmd "argA $VAR argB""#).0;
+        let input = tokenize(r#"cmd "argA $VAR argB""#, false).0;
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(cmd, to_command_list(Op::Cmd {
             prog: Some(to_word("cmd")),
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn parse_cmd_with_connected_args() {
-        let input = tokenize(r#"cmd argA"argB argC"$TEST'argD argE'"#).0;
+        let input = tokenize(r#"cmd argA"argB argC"$TEST'argD argE'"#, false).0;
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(cmd, to_command_list(Op::Cmd {
             prog: Some(to_word("cmd")),
@@ -312,7 +312,7 @@ mod tests {
 
     #[test]
     fn parse_eql_stmt() {
-        let input = tokenize("FOO=bar").0;
+        let input = tokenize("FOO=bar", false).0;
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(cmd, to_command_list(Op::Cmd {
             prog: None,
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn parse_eql_trailing_arg() {
-        let input = tokenize("FOO=bar baz").0;
+        let input = tokenize("FOO=bar baz", false).0;
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(cmd, to_command_list(Op::Cmd {
             prog: Some(to_word("baz")),
@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn parse_pipe() {
-        let input = tokenize("cmdA | cmdB arg").0;
+        let input = tokenize("cmdA | cmdB arg", false).0;
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(cmd, vec![CommandList::SimpleList(Pipeline {
             seq: vec![
@@ -365,7 +365,7 @@ mod tests {
 
     #[test]
     fn parse_redir_out() {
-        let input = tokenize("cmd > file.txt >> log.txt 2>&1").0;
+        let input = tokenize("cmd > file.txt >> log.txt 2>&1", false).0;
         let cmd = parse(input, &mut vec![]).unwrap();
         let write_flags = fcntl::O_WRONLY | fcntl::O_CREAT;
         let trunc_flags = write_flags | fcntl::O_TRUNC;
@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn parse_redir_in() {
-        let input = tokenize("cmd < file.txt <&3").0;
+        let input = tokenize("cmd < file.txt <&3", false).0;
         let cmd = parse(input, &mut vec![]).unwrap();
         let read_flags = fcntl::O_RDONLY;
         assert_eq!(cmd, to_command_list(Op::Cmd {
@@ -415,7 +415,7 @@ mod tests {
 
     #[test]
     fn parse_redir_prefix() {
-        let input = tokenize("> file.txt cmd").0;
+        let input = tokenize("> file.txt cmd", false).0;
         let cmd = parse(input, &mut vec![]).unwrap();
         let write_flags = fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_TRUNC;
         assert_eq!(cmd, to_command_list(Op::Cmd {
@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn populate_heredocs() {
-        let input = tokenize("cmd <<EOF").0;
+        let input = tokenize("cmd <<EOF", false).0;
         let contents: String = "contents".into();
         let cmd = parse(input, &mut vec![contents.clone()]).unwrap();
         assert_eq!(cmd, to_command_list(Op::Cmd {
@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn async_command() {
-        let input = tokenize("cmd &").0;
+        let input = tokenize("cmd &", false).0;
         let cmd = parse(input, &mut vec![]).unwrap();
 
         assert_eq!(cmd, vec![CommandList::SimpleList(Pipeline {
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn semi_separated() {
-        let input = tokenize("cmdA; cmdB").0;
+        let input = tokenize("cmdA; cmdB", false).0;
         let cmd = parse(input, &mut vec![]).unwrap();
 
         assert_eq!(cmd, vec![CommandList::SimpleList(Pipeline {
