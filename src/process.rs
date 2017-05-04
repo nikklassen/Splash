@@ -25,7 +25,7 @@ use util;
 #[derive(Debug)]
 pub enum IOOp {
     Duplicate(i32),
-    File(Word, OFlag),
+    File(String, OFlag),
     FromString(String),
     Replace(i32),
 }
@@ -34,15 +34,15 @@ pub enum IOOp {
 pub struct Process {
     pub pid: i32,
     pub pgid: i32,
-    pub prog: Option<Word>,
-    pub args: Vec<Word>,
+    pub prog: Option<String>,
+    pub args: Vec<String>,
     pub io: Vec<(i32, IOOp)>,
     pub async: bool,
     pub env: Vec<CmdPrefix>,
 }
 
 impl Process {
-    pub fn new(prog: Option<Word>, args: Vec<Word>, env: Vec<CmdPrefix>, io: Vec<CmdPrefix>) -> Process {
+    pub fn new(prog: Option<String>, args: Vec<String>, env: Vec<CmdPrefix>, io: Vec<CmdPrefix>) -> Process {
         let new_io: Vec<(i32, IOOp)> = io.into_iter().map(|prefix| {
             if let CmdPrefix::IORedirect { fd, target } = prefix {
                 let op = match target {
@@ -66,26 +66,16 @@ impl Process {
             env: env,
         }
     }
-
-    /// Converts the `Word` value in the prog to a String
-    pub fn expand_prog(&self) -> Option<String> {
-        self.prog.as_ref().map(word_to_value)
-    }
-
-    /// Converts the `Word` value in each arg to a String
-    pub fn expand_args(&self) -> Vec<String> {
-        self.args.iter().map(word_to_value).collect()
-    }
 }
 
 use std::fmt;
 impl fmt::Display for Process {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let prog = self.expand_prog().unwrap_or(String::new());
+        let prog = self.prog.clone().unwrap_or(String::new());
         if !self.args.is_empty() {
             write!(f, "{} {}",
                    prog,
-                   util::join_str(&self.expand_args(), " "))
+                   util::join_str(&self.args, " "))
         } else {
             write!(f, "{}", prog)
         }
@@ -127,7 +117,7 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: CommandList, user_env: 
         // Interpolate parameters at the last possible moment
         interpolate::expand(&mut p, user_env)?;
 
-        let builtin_entry = builtins.get_mut(&p.expand_prog().unwrap());
+        let builtin_entry = builtins.get_mut(p.prog.as_ref().unwrap());
         if let Some(cmd) = builtin_entry {
             builtin_result = exec_builtin(p, cmd, pgid, has_pipeline);
         } else {
@@ -176,7 +166,7 @@ fn update_env(p: &Process, mut user_env: &mut UserEnv) {
         if let &CmdPrefix::Assignment { ref lhs, ref rhs } = assignment {
             let entry = user_env.vars.entry(lhs.clone())
                 .or_insert(String::new());
-            *entry = word_to_value(rhs);
+            *entry = rhs.clone();
         }
     }
 }
@@ -189,8 +179,7 @@ fn add_redirects_to_io(io: &Vec<(i32, IOOp)>) -> Result<(), String> {
         let mut fd = match io_redirect {
             &IOOp::File(ref name, ref flags) => {
                 let mode = stat::S_IRUSR | stat::S_IWUSR | stat::S_IRGRP | stat::S_IROTH;
-                let file_name = word_to_value(name);
-                let path = Path::new(&file_name);
+                let path = Path::new(&name);
                 let file = try!(fcntl::open(path, *flags, mode).or_else(util::show_err));
                 let new_fd = Fd::new(file);
                 new_fd
@@ -248,7 +237,7 @@ fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
         if has_input(&p.io) {
             util::write_err(&format!(
                 "splash: Ignoring piped input for {}; programs may not behave as expected.",
-                p.expand_prog().unwrap_or("assignment".to_string())));
+                p.prog.clone().unwrap_or("assignment".to_string())));
         }
         // insert at the front so these file descriptors will be overwritten by anything later
         p.io.insert(0, (STDOUT_FILENO, IOOp::Replace(pipe_in)));
@@ -265,7 +254,7 @@ fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
         if num_procs > 1 && has_input(&last_proc.io) {
             util::write_err(&format!(
                 "splash: Ignoring piped input for {}; programs may not behave as expected.",
-                last_proc.expand_prog().unwrap_or("assignment".to_string())));
+                last_proc.prog.clone().unwrap_or("assignment".to_string())));
         }
         let stdout_dup = IOOp::Duplicate(STDOUT_FILENO);
         last_proc.io.insert(0, (STDOUT_FILENO, stdout_dup));
@@ -329,14 +318,14 @@ where F: FnOnce() -> Result<i32, Error> {
 }
 
 fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: i32, has_pipeline: bool) -> Result<i32, String> {
-    let args: Vec<String> = process.expand_args();
     if !has_pipeline {
         if let Err(e) = add_redirects_to_io(&process.io) {
             return Err(e);
         }
         process.pid = getpid();
-        cmd.run(&args[..]).or_else(util::show_err)
+        cmd.run(&process.args[..]).or_else(util::show_err)
     } else {
+        let args = process.args.clone();
         fork_process(process, pgid, || {
             cmd.run(&args[..])
         });
@@ -347,8 +336,8 @@ fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: i32, has_pi
 }
 
 fn fork_proc(process: &mut Process, pgid: i32) {
-    let prog = process.expand_prog().unwrap();
-    let args = process.expand_args();
+    let prog = process.prog.clone().unwrap();
+    let args = process.args.clone();
     fork_process(process, pgid, move || {
         let args = &iter::once(prog.clone())
             .chain(args)

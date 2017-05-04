@@ -1,29 +1,77 @@
+use std::iter;
 use std::env;
 use std::ffi::{CString, CStr};
 use libc;
 
 use env::UserEnv;
 use input::ast::*;
-use input::token::{self, Token};
 use process::Process;
 use util;
 
-fn expand_token(t: &Token, user_env: &UserEnv) -> Token {
-    match t {
-        &Token::Var(ref v) => {
-            let s = user_env.vars
-            .get(v)
-            .map(|value| value.clone())
-            .unwrap_or_else(|| {
-                env::var(v)
-                    .unwrap_or(String::new())
-            });
-            Token::String(s)
-        },
-        &Token::Quoted(ref ts) => Token::Quoted(
-            ts.iter().map(|t| expand_token(t, user_env)).collect()),
-        _ => t.clone(),
+fn parameter_expansion(t: &String, user_env: &UserEnv) -> String {
+    let mut s = String::new();
+    let mut chars = t.chars();
+    let mut is_lit = false;
+    loop {
+        let mut next = chars.next();
+        match next {
+            Some('$') => {
+                if is_lit {
+                    s.push('$');
+                    continue;
+                }
+                // fall-through to variable evaluation
+            },
+            Some(c) => {
+                if c == '\'' {
+                    is_lit = !is_lit;
+                }
+                s.push(c);
+                continue;
+            },
+            None => {
+                break;
+            },
+        }
+
+        next = chars.next();
+        match next {
+            Some('{') => {
+                // TODO escaping of delimeter
+                let param_name: String = chars.by_ref().take_while(|c| *c != '}').collect();
+                chars.next();
+                let param = user_env.vars
+                    .get(&param_name)
+                    .map(|value| value.clone())
+                    .unwrap_or_else(|| {
+                        env::var(&param_name)
+                            .unwrap_or(String::new())
+                    });
+                s.push_str(&param);
+            },
+            Some('(') => {
+                // TODO arithmetic
+                let command: String = chars.by_ref().take_while(|c| *c != ')').collect();
+                chars.next();
+                s.push_str(&command);
+            },
+            Some(c) => {
+                let param_name: String = iter::once(c).chain(chars.by_ref().take_while(|c| c.is_alphanumeric())).collect();
+                let param = user_env.vars
+                    .get(&param_name)
+                    .map(|value| value.clone())
+                    .unwrap_or_else(|| {
+                        env::var(&param_name)
+                            .unwrap_or(String::new())
+                    });
+                s.push_str(&param);
+            },
+            None => {
+                break;
+            },
+        }
     }
+    s
 }
 
 fn get_user_home(name: &str) -> Option<String> {
@@ -92,28 +140,18 @@ fn tilde_expansion(s: &str, is_assignment: bool) -> Result<String, String> {
     }
 }
 
-fn expand_word(word: &Word, user_env: &UserEnv, is_assignment: bool) -> Result<Word, String> {
-    let mut parts = word.0.clone();
-    if !is_assignment {
-        if let Some(&mut Token::String(ref mut s)) = parts.first_mut() {
-            *s = tilde_expansion(s, false)?;
-        }
-    }
-    let expanded_tokens = util::sequence(parts.iter_mut()
-        .map(|part| {
-            if is_assignment {
-                if let &mut Token::String(ref mut s) = part {
-                    *s = tilde_expansion(s, is_assignment)?
-                }
-            }
-            let new_token = expand_token(&part, user_env);
-            let expanded = token::to_value(&new_token).unwrap_or(String::new());
-            Ok(expanded)
-        })
-        .collect::<Vec<Result<String, String>>>())?;
+fn quote_removal(word: &String) -> String {
+    word.chars()
+        .filter(|c| !(*c == '\'' || *c == '\"'))
+        .collect()
+}
 
-    let val = util::join_str(&expanded_tokens, "");
-    Ok(Word(vec![Token::String(val)]))
+fn expand_word(word: &String, user_env: &UserEnv, is_assignment: bool) -> Result<String, String> {
+    // TODO no path name expansion in double quotes
+    let mut s = tilde_expansion(&word, is_assignment)?;
+    s = parameter_expansion(&s, user_env);
+    s = quote_removal(&s);
+    Ok(s)
 }
 
 pub fn expand(p: &mut Process, user_env: &UserEnv) -> Result<(), String> {
@@ -135,7 +173,6 @@ mod tests {
     use env::UserEnv;
     use std::env;
     use super::*;
-    use input::token::Token;
 
     fn make_test_env() -> UserEnv {
         let mut user_env = UserEnv::new();
@@ -144,82 +181,99 @@ mod tests {
     }
 
     #[test]
+    fn no_expansions() {
+        let user_env = make_test_env();
+        let toks = "hello".to_string();
+        let word = expand_word(&toks, &user_env, false).unwrap();
+
+        assert_eq!(word, toks);
+    }
+
+    #[test]
     fn expand_env_var() {
         let user_env = make_test_env();
-        let toks = vec![Token::Var("HOME".to_string())];
-        let word = expand_word(&Word(toks), &user_env, false).unwrap();
+        let toks = "$HOME".to_string();
+        let word = expand_word(&toks, &user_env, false).unwrap();
 
         let home = env::var("HOME").unwrap_or(String::new());
-        assert_eq!(word, Word(vec![Token::String(home)]));
+        assert_eq!(word, home);
     }
 
     #[test]
     fn expand_user_var() {
         let user_env = make_test_env();
-        let toks = vec![Token::Var("TEST".to_string())];
-        let word = expand_word(&Word(toks), &user_env, false).unwrap();
-        assert_eq!(word, Word(vec![Token::String("value".to_string())]));
+        let toks = "$TEST".to_string();
+        let word = expand_word(&toks, &user_env, false).unwrap();
+        assert_eq!(word, "value".to_string());
     }
 
     #[test]
     fn expand_quoted() {
         let user_env = make_test_env();
-        let toks = vec![Token::Quoted(
-            vec![Token::Var("TEST".to_string())])];
-        let word = expand_word(&Word(toks), &user_env, false).unwrap();
-        assert_eq!(word, Word(vec![Token::String("value".to_string())]));
+        let toks = r#""$TEST""#.to_string();
+        let word = expand_word(&toks, &user_env, false).unwrap();
+        assert_eq!(word, "value".to_string());
+    }
+
+    #[test]
+    fn no_expand_var_in_single_quotes() {
+        let user_env = make_test_env();
+        let toks = "'$TEST'".to_string();
+        let word = expand_word(&toks, &user_env, true).unwrap();
+
+        assert_eq!(word, "$TEST".to_string());
     }
 
     #[test]
     fn expand_tilde() {
         let user_env = make_test_env();
-        let toks = vec![Token::String("~".to_string())];
-        let word = expand_word(&Word(toks), &user_env, false).unwrap();
+        let toks = "~".to_string();
+        let word = expand_word(&toks, &user_env, false).unwrap();
         let home = env::var("HOME").unwrap();
-        assert_eq!(word, Word(vec![Token::String(home)]));
+        assert_eq!(word, home);
     }
 
     #[test]
     fn expand_tilde_with_slash() {
         let user_env = make_test_env();
-        let toks = vec![Token::String("~/.config".to_string())];
-        let word = expand_word(&Word(toks), &user_env, false).unwrap();
+        let toks = "~/.config".to_string();
+        let word = expand_word(&toks, &user_env, false).unwrap();
         let home = env::var("HOME").unwrap();
-        assert_eq!(word, Word(vec![Token::String(home + "/.config")]));
+        assert_eq!(word, home + "/.config");
     }
 
     #[test]
     fn expand_tilde_user() {
         let user_env = make_test_env();
-        let toks = vec![Token::String("~root/.config".to_string())];
-        let word = expand_word(&Word(toks), &user_env, false).unwrap();
-        assert_eq!(word, Word(vec![Token::String("/root/.config".to_string())]));
+        let toks = "~root/.config".to_string();
+        let word = expand_word(&toks, &user_env, false).unwrap();
+        assert_eq!(word, "/root/.config".to_string());
     }
 
     #[test]
     fn expand_tilde_err_no_user() {
         let user_env = make_test_env();
-        let toks = vec![Token::String("~unknown/.config".to_string())];
-        let word = expand_word(&Word(toks), &user_env, false);
+        let toks = "~unknown/.config".to_string();
+        let word = expand_word(&toks, &user_env, false);
         assert!(word.is_err());
     }
 
     #[test]
     fn expand_tilde_after_semi() {
         let user_env = make_test_env();
-        let toks = vec![Token::String("a:~".to_string())];
-        let word = expand_word(&Word(toks), &user_env, true).unwrap();
+        let toks = "a:~".to_string();
+        let word = expand_word(&toks, &user_env, true).unwrap();
 
         let home = env::var("HOME").unwrap();
-        assert_eq!(word, Word(vec![Token::String("a:".to_string() + &home)]));
+        assert_eq!(word, "a:".to_string() + &home);
     }
 
     #[test]
     fn expand_tilde_after_semi_with_name() {
         let user_env = make_test_env();
-        let toks = vec![Token::String("a:~root:b".to_string())];
-        let word = expand_word(&Word(toks), &user_env, true).unwrap();
+        let toks = "a:~root:b".to_string();
+        let word = expand_word(&toks, &user_env, true).unwrap();
 
-        assert_eq!(word, Word(vec![Token::String("a:/root:b".to_string())]));
+        assert_eq!(word, "a:/root:b".to_string());
     }
 }

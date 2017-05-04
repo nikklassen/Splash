@@ -40,35 +40,41 @@ impl Positioner for Op {
     }
 }
 
-fn word<I>(input: I) -> primitives::ParseResult<Word, I>
+fn word<I>(input: I) -> primitives::ParseResult<String, I>
 where I: Stream<Item=Token> {
-    many1(satisfy(|t| match t {
-        Token::String(_) | Token::Quoted(_) | Token::Var(_) => true,
-        _ => false,
-    })).map(Word)
+    satisfy(|t| is_match!(t, Token::Word(_)))
+    .map(|t| if let Token::Word(w) = t { w } else { unreachable!() })
     .parse_stream(input)
 }
 
 fn io_redirect<I>(input: I) -> primitives::ParseResult<CmdPrefix, I>
 where I: Stream<Item=Token> {
-    satisfy(|t| is_match!(t, Token::Redir(..)))
-         .skip(ws())
-         .and(parser(word::<I>))
+    try(optional(satisfy(|t| is_match!(t, Token::IONumber(_))))
+        .and(satisfy(token::is_redir)))
+    .and(parser(word::<I>))
     .map(build_io_redirect)
     .parse_stream(input)
 }
 
 fn assignment<I>(input: I) -> primitives::ParseResult<CmdPrefix, I>
 where I: Stream<Item=Token> {
-    try(satisfy(|t| is_match!(t, Token::String(_)))
-        .skip(token(Token::Eql)))
-        .and(parser(word::<I>))
-        .map(|(lhs, rhs)| {
+    try(satisfy(|t| {
+        if let Token::Word(w) = t {
+            w.contains('=')
+        } else {
+            false
+        }
+    })).map(|t| {
+        if let Token::Word(w) = t {
+            let mut split = w.split("=");
             CmdPrefix::Assignment {
-                lhs: token::to_value(&lhs).unwrap(),
-                rhs: rhs
+                lhs: split.next().unwrap().to_owned(),
+                rhs: split.next().unwrap().to_owned(),
             }
-        })
+        } else {
+            unreachable!()
+        }
+    })
     .parse_stream(input)
 }
 
@@ -77,16 +83,16 @@ where I: Stream<Item=Token> {
     let cmd_prefix = many1(choice![
          parser(io_redirect::<I>),
          parser(assignment::<I>)
-    ].skip(ws()));
-    let cmd_word = || parser(word::<I>).skip(ws());
+    ]);
+    let cmd_word = || parser(word::<I>);
 
     (cmd_prefix.and(many(cmd_word())))
      .or(many1(cmd_word()).map(|w| (vec![], w)))
     // TODO redirects and args can be interleaved
-    .and(many(parser(io_redirect::<I>).skip(ws())))
-    .map(|((cmd_prefix, mut cmd_args), redirect_suffix): ((Vec<CmdPrefix>, Vec<Word>), Vec<CmdPrefix>)| {
+    .and(many(parser(io_redirect::<I>)))
+    .map(|((cmd_prefix, mut cmd_args), redirect_suffix): ((Vec<CmdPrefix>, Vec<String>), Vec<CmdPrefix>)| {
         let mut prog = None;
-        let mut args: Vec<Word> = Vec::new();
+        let mut args: Vec<String> = Vec::new();
         if cmd_args.len() > 0 {
             prog = Some(cmd_args.remove(0));
             args = cmd_args;
@@ -102,10 +108,6 @@ where I: Stream<Item=Token> {
     .parse_stream(input)
 }
 
-fn ws<I>() -> Optional<combinator::Token<I>> where I: Stream<Item=Token> {
-    optional(token(Token::Whitespace))
-}
-
 fn pipeline<I>(input: I) -> primitives::ParseResult<Pipeline, I>
 where I: Stream<Item=Token> {
     let cmd_chain = parser(command::<I>).map(|op| vec![op]);
@@ -116,8 +118,8 @@ where I: Stream<Item=Token> {
     });
 
     chainl1(
-        cmd_chain.skip(ws()),
-        pipe.skip(ws()))
+        cmd_chain,
+        pipe)
         .map(|cmds| {
             Pipeline {
                 seq: cmds,
@@ -131,14 +133,12 @@ where I: Stream<Item=Token> {
 fn and_or<I>(input: I) -> primitives::ParseResult<CommandList, I>
 where I: Stream<Item=Token> {
     chainl1(
-        parser(pipeline::<I>).map(CommandList::SimpleList).skip(ws()),
-        choice([token(Token::And), token(Token::Or)])
-            .skip(ws())
+        parser(pipeline::<I>).map(CommandList::SimpleList),
+        choice([token(Token::AND), token(Token::OR)])
             .skip(linebreak())
-            .skip(ws())
             .map(|t: Token| move |l, r| {
                 if let CommandList::SimpleList(pipe) = r {
-                    if t == Token::And {
+                    if t == Token::AND {
                         CommandList::AndList(Box::new(l), pipe)
                     } else {
                         CommandList::OrList(Box::new(l), pipe)
@@ -165,7 +165,7 @@ where I: Stream<Item=Token> {
     let separator_op = || choice![token(Token::Semi), token(Token::Async)];
     let separator = (separator_op().skip(linebreak()))
         .or(newline_list().map(|_| Token::LineBreak))
-        .skip(ws());
+        ;
 
     fn process_sep(sep: Token, cmd: &mut CompleteCommand) -> () {
         if sep == Token::Async {
@@ -179,10 +179,8 @@ where I: Stream<Item=Token> {
     }
 
     let list = parser(and_or).map(|p| vec![p])
-        .skip(ws())
         .and(many(try(
                     separator_op()
-                    .skip(ws())
                     .and(parser(and_or).map(|p| vec![p])))))
         .map(|(cmd, cmds): (CompleteCommand, Vec<(Token, CompleteCommand)>)| {
             let mut c = cmd;
@@ -259,13 +257,13 @@ mod tests {
         })]
     }
 
-    fn to_word(s: &str) -> Word {
-        Word(vec![Token::String(s.to_string())])
+    fn to_word(s: &str) -> String {
+        s.to_string()
     }
 
     #[test]
     fn parse_cmd_no_args() {
-        let input = tokenize("cmd").unwrap();
+        let input = tokenize("cmd").0;
         let cmd = parse(input, &mut vec![]).unwrap();
         warn!("{:?}", cmd);
         assert_eq!(cmd, to_command_list(Op::Cmd {
@@ -278,7 +276,7 @@ mod tests {
 
     #[test]
     fn parse_cmd_multiple_args() {
-        let input = tokenize("cmd argA argB").unwrap();
+        let input = tokenize("cmd argA argB").0;
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(cmd, to_command_list(Op::Cmd {
             prog: Some(to_word("cmd")),
@@ -290,14 +288,11 @@ mod tests {
 
     #[test]
     fn parse_cmd_with_string_arg() {
-        let input = tokenize(r#"cmd "argA $VAR argB""#).unwrap();
+        let input = tokenize(r#"cmd "argA $VAR argB""#).0;
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(cmd, to_command_list(Op::Cmd {
             prog: Some(to_word("cmd")),
-            args: vec![Word(vec![Token::Quoted(vec![
-                Token::String("argA ".to_string()),
-                Token::Var("VAR".to_string()),
-                Token::String(" argB".to_string())])])],
+            args: vec![r#""argA $VAR argB""#.to_string()],
             io: Vec::new(),
             env: Vec::new(),
         }));
@@ -305,17 +300,11 @@ mod tests {
 
     #[test]
     fn parse_cmd_with_connected_args() {
-        let input = tokenize(r#"cmd argA"argB argC"$TEST'argD argE'"#).unwrap();
+        let input = tokenize(r#"cmd argA"argB argC"$TEST'argD argE'"#).0;
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(cmd, to_command_list(Op::Cmd {
             prog: Some(to_word("cmd")),
-            args: vec![
-                Word(vec![
-                     Token::String("argA".to_string()),
-                     Token::Quoted(vec![Token::String("argB argC".to_string())]),
-                     Token::Var("TEST".to_string()),
-                     Token::String("argD argE".to_string())])
-            ],
+            args: vec![r#"argA"argB argC"$TEST'argD argE'"#.to_string()],
             io: Vec::new(),
             env: Vec::new(),
         }));
@@ -323,7 +312,7 @@ mod tests {
 
     #[test]
     fn parse_eql_stmt() {
-        let input = tokenize("FOO=bar").unwrap();
+        let input = tokenize("FOO=bar").0;
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(cmd, to_command_list(Op::Cmd {
             prog: None,
@@ -338,7 +327,7 @@ mod tests {
 
     #[test]
     fn parse_eql_trailing_arg() {
-        let input = tokenize("FOO=bar baz").unwrap();
+        let input = tokenize("FOO=bar baz").0;
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(cmd, to_command_list(Op::Cmd {
             prog: Some(to_word("baz")),
@@ -353,7 +342,7 @@ mod tests {
 
     #[test]
     fn parse_pipe() {
-        let input = tokenize("cmdA | cmdB arg").unwrap();
+        let input = tokenize("cmdA | cmdB arg").0;
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(cmd, vec![CommandList::SimpleList(Pipeline {
             seq: vec![
@@ -376,7 +365,7 @@ mod tests {
 
     #[test]
     fn parse_redir_out() {
-        let input = tokenize("cmd > file.txt >> log.txt 2>&1").unwrap();
+        let input = tokenize("cmd > file.txt >> log.txt 2>&1").0;
         let cmd = parse(input, &mut vec![]).unwrap();
         let write_flags = fcntl::O_WRONLY | fcntl::O_CREAT;
         let trunc_flags = write_flags | fcntl::O_TRUNC;
@@ -404,7 +393,7 @@ mod tests {
 
     #[test]
     fn parse_redir_in() {
-        let input = tokenize("cmd < file.txt <&3").unwrap();
+        let input = tokenize("cmd < file.txt <&3").0;
         let cmd = parse(input, &mut vec![]).unwrap();
         let read_flags = fcntl::O_RDONLY;
         assert_eq!(cmd, to_command_list(Op::Cmd {
@@ -426,7 +415,7 @@ mod tests {
 
     #[test]
     fn parse_redir_prefix() {
-        let input = tokenize("> file.txt cmd").unwrap();
+        let input = tokenize("> file.txt cmd").0;
         let cmd = parse(input, &mut vec![]).unwrap();
         let write_flags = fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_TRUNC;
         assert_eq!(cmd, to_command_list(Op::Cmd {
@@ -444,7 +433,7 @@ mod tests {
 
     #[test]
     fn populate_heredocs() {
-        let input = tokenize("cmd <<EOF").unwrap();
+        let input = tokenize("cmd <<EOF").0;
         let contents: String = "contents".into();
         let cmd = parse(input, &mut vec![contents.clone()]).unwrap();
         assert_eq!(cmd, to_command_list(Op::Cmd {
@@ -462,7 +451,7 @@ mod tests {
 
     #[test]
     fn async_command() {
-        let input = tokenize("cmd &").unwrap();
+        let input = tokenize("cmd &").0;
         let cmd = parse(input, &mut vec![]).unwrap();
 
         assert_eq!(cmd, vec![CommandList::SimpleList(Pipeline {
@@ -479,7 +468,7 @@ mod tests {
 
     #[test]
     fn semi_separated() {
-        let input = tokenize("cmdA; cmdB").unwrap();
+        let input = tokenize("cmdA; cmdB").0;
         let cmd = parse(input, &mut vec![]).unwrap();
 
         assert_eq!(cmd, vec![CommandList::SimpleList(Pipeline {

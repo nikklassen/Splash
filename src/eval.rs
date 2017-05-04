@@ -52,28 +52,20 @@ pub fn eval(mut input_reader: InputReader, mut builtins: BuiltinMap) {
             break;
         }
 
-        let tokens: Vec<Token> = match tokenizer::tokenize(&line) {
-            Ok(tokens) => {
-                tokens
-            },
-            Err(e) => {
-                if e != TokenError::Unterminated {
-                    write_err(&format!("splash: {}", e));
-                    line = String::new();
-                }
-                continue;
-            },
-        };
+        let (tokens, unterminated) = tokenizer::tokenize(&line);
+        if unterminated {
+            continue;
+        }
         line = String::new();
 
         let mut input: Vec<String> = Vec::new();
-        let mut here_docs: Vec<(RedirOp, String)> = Vec::new();
+        let mut here_docs: Vec<(Token, String)> = Vec::new();
         let mut i = 0;
         while i < tokens.len() {
             match tokens[i] {
-                Token::Redir(_, ref o@RedirOp::DLESS) | Token::Redir(_, ref o@RedirOp::DLESSDASH) => {
-                    if let Token::String(ref s) = tokens[i+1] {
-                        here_docs.push((o.clone(), s.clone()));
+                Token::DLESS | Token::DLESSDASH => {
+                    if let Token::Word(ref s) = tokens[i+1] {
+                        here_docs.push((tokens[i].clone(), s.clone()));
                     } else {
                         write_err(&"splash: here docs must be strings".to_string());
                         continue;
@@ -89,7 +81,7 @@ pub fn eval(mut input_reader: InputReader, mut builtins: BuiltinMap) {
             let mut content = String::new();
             loop {
                 if let Some(mut s) = getline(&mut input_reader, true) {
-                    if kind == RedirOp::DLESSDASH {
+                    if kind == Token::DLESSDASH {
                         s = s.chars().skip_while(|c| c.is_whitespace()).collect::<String>();
                     }
                     if s == here_doc {

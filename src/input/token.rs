@@ -1,7 +1,13 @@
 use std::fmt::{Display, Formatter, Error};
 
-#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
-pub enum RedirOp {
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum Token {
+    Word(String),
+    IONumber(i32),
+
+    LineBreak,
+
+    // Operators
     LESS,
     DLESS,
     DLESSDASH,
@@ -12,36 +18,34 @@ pub enum RedirOp {
     DGREAT,
     GREATAND,
     CLOBBER,
+
+    AND,
+    OR,
+    DSEMI,
+
+    // Non-operator special symbols
+    Semi,
+    Async,
+    Pipe,
 }
 
-impl RedirOp {
+
+impl Token {
     pub fn is_out(&self) -> bool {
         match *self {
-            RedirOp::GREAT | RedirOp::DGREAT |
-                RedirOp::GREATAND | RedirOp::CLOBBER => true,
+            Token::GREAT | Token::DGREAT | Token::GREATAND | Token::CLOBBER => true,
             _ => false,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
-pub enum Token {
-    // Semantically important
-    LineBreak,
-    // Not semantically important
-    Whitespace,
-
-    String(String),
-    Quoted(Vec<Token>),
-    Var(String),
-    Eql,
-    Redir(Option<i32>, RedirOp),
-
-    Semi,
-    Async,
-    And,
-    Pipe,
-    Or,
+pub fn is_redir(t: Token) -> bool {
+    match t {
+        Token::GREAT | Token::DGREAT | Token::GREATAND | Token::CLOBBER
+            | Token::LESS | Token::DLESS | Token::DLESSDASH | Token::LESSAND
+            | Token::LESSGREAT => true,
+        _ => false,
+    }
 }
 
 impl Display for Token {
@@ -50,37 +54,3 @@ impl Display for Token {
         Ok(())
     }
 }
-
-#[derive(Debug, PartialEq)]
-pub enum TokenError {
-    Unterminated,
-    Unexpected(String),
-}
-
-impl Display for TokenError {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        match self {
-            &TokenError::Unterminated => try!(write!(f, "unterminated string")),
-            &TokenError::Unexpected(ref s) => try!(write!(f, "unexpected input: {}", s)),
-        }
-        Ok(())
-    }
-}
-
-pub type TokenResult = Result<Option<Token>, TokenError>;
-
-pub fn to_value(a: &Token) -> Option<String> {
-    match a {
-        &Token::String(ref s) => Some(s.clone()),
-        &Token::Quoted(ref contents) => Some(contents.iter().cloned().fold(String::new(), |mut acc: String, t| {
-            let v = to_value(&t);
-            if v.is_none() {
-                return acc;
-            }
-            acc.push_str(&v.unwrap());
-            acc
-        })),
-        _ => None,
-    }
-}
-

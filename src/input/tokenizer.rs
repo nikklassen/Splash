@@ -1,446 +1,423 @@
-use super::token::*;
+use std::collections::hash_map::*;
 
-macro_rules! accept {
-    ( $reader: ident, $ret_val: expr ) => {
-        { $reader.advance(); return Ok(Some($ret_val)); }
+use super::token::Token;
+
+#[derive(PartialEq)]
+enum TokenState {
+    WORD,
+    OPERATOR,
+}
+
+fn is_op_prefix(c: char) -> bool {
+    match c {
+        '&' | '|' | '<' | '>' | ';' => true,
+        _ => false,
     }
 }
 
-
-struct CharReader {
-    source: Vec<char>,
-    pos: usize,
-    current: Option<char>
-}
-
-impl CharReader {
-    fn new(s: String) -> Self {
-        let s_chars: Vec<_> = s.chars().collect();
-        let mut first = None;
-        if !s_chars.is_empty() {
-            first = Some(s_chars[0]);
-        }
-
-        CharReader {
-            source: s_chars,
-            pos: 0,
-            current: first,
-        }
-    }
-
-    fn advance(&mut self) {
-        if self.pos == self.source.len() - 1 {
-            self.current = None
-        } else {
-            self.pos += 1;
-            self.current = Some(self.source[self.pos]);
-        }
-    }
-
-    fn backtrack(&mut self, back: usize) {
-        if back > self.pos {
-            panic!("Cannot backtrack forwards");
-        }
-        self.pos = self.pos;
-        self.current = Some(self.source[self.pos]);
+fn add_token(mut tokens: &mut Vec<Token>, s: &str) {
+    if s.len() > 0 {
+        tokens.push(Token::Word(s.to_owned()));
     }
 }
 
-fn ws_tok(reader: &mut CharReader) -> TokenResult {
-    let mut has_ws = false;
+pub fn tokenize(input: &str) -> (Vec<Token>, bool) {
+    let operator_table: HashMap<&str, Token> = hash_map!{
+        "<" => Token::LESS,
+        "<<" => Token::DLESS,
+        "<<-" => Token::DLESSDASH,
+        "<&" => Token::LESSAND,
+        "<>" => Token::LESSGREAT,
+        ">" => Token::GREAT,
+        ">>" => Token::DGREAT,
+        ">&" => Token::GREATAND,
+        ">|" => Token::CLOBBER,
+        "&&" => Token::AND,
+        "||" => Token::OR,
+        ";;" => Token::DSEMI,
+        // Non-operators, but prefixes
+        "|" => Token::Pipe,
+        "&" => Token::Async,
+        ";" => Token::Semi,
+    };
+
+    let mut chars = input.chars().peekable();
+    let mut token = String::new();
+    let mut tokens: Vec<Token> = Vec::new();
+    let mut state = TokenState::WORD;
+
+    let mut skip_char;
+    let mut unterminated = false;
+    let mut param_nesting = 0;
+    let mut command_nesting = 0;
+    let mut arithmetic_nesting = 0;
+    let mut quote_nesting = 0;
+
     loop {
-        match reader.current {
-            Some('\n') => accept!(reader, Token::LineBreak),
-            Some(c) if c.is_whitespace() => {
-                has_ws = true;
-                reader.advance();
-            }
-            _ => {
-                return if has_ws {
-                    Ok(Some(Token::Whitespace))
-                } else {
-                    Ok(None)
-                }
+        skip_char = false;
+        let mut c;
+        if let Some(new_c) = chars.next() {
+            c = new_c;
+        } else {
+            break;
+        }
+        if state == TokenState::OPERATOR {
+            let mut new_op = token.clone();
+            new_op.push(c);
+
+            // Rule 3
+            if !operator_table.contains_key(new_op.as_str()) {
+                let op: Token = (*operator_table.get(token.as_str()).unwrap()).clone();
+                tokens.push(op);
+                token.clear();
+
+                // Fall-through and parse the current character
+                state = TokenState::WORD;
             }
         }
-    }
-}
-
-fn char_tok(reader: &mut CharReader, token: char, tt: Token) -> TokenResult {
-    if let Some(c) = reader.current {
-        if token == c {
-            reader.advance();
-            return Ok(Some(tt));
-        }
-    }
-    Ok(None)
-}
-
-fn eql_tok(reader: &mut CharReader) -> TokenResult {
-    char_tok(reader, '=', Token::Eql)
-}
-
-fn semi_tok(reader: &mut CharReader) -> TokenResult {
-    char_tok(reader, ';', Token::Semi)
-}
-
-fn redir_tok(reader: &mut CharReader) -> TokenResult {
-    match reader.current {
-        Some('<') => {
-            reader.advance();
-            match reader.current {
-                Some('<') => {
-                    reader.advance();
-                    match reader.current {
-                        Some('-') => accept!(reader, Token::Redir(None, RedirOp::DLESSDASH)),
-                        _ => Ok(Some(Token::Redir(None, RedirOp::DLESS))),
+        if state == TokenState::WORD {
+            if c == '\\' {
+                let lookahead = chars.peek().map(|c| *c);
+                if let Some(next) = lookahead {
+                    match next {
+                        '$' | '`' | '"' | '\\' | '\n' => {
+                            token.push(c);
+                            chars.next();
+                            c = next;
+                        }
+                        // Rule 4a
+                        _ => {
+                            chars.next();
+                            c = next;
+                        }
                     }
-                },
-                Some('>') => accept!(reader, Token::Redir(None, RedirOp::LESSGREAT)),
-                Some('&') => accept!(reader, Token::Redir(None, RedirOp::LESSAND)),
-                _ => Ok(Some(Token::Redir(None, RedirOp::LESS))),
-            }
-        },
-        Some('>') => {
-            reader.advance();
-            match reader.current {
-                Some('>') => accept!(reader, Token::Redir(None, RedirOp::DGREAT)),
-                Some('|') => accept!(reader, Token::Redir(None, RedirOp::CLOBBER)),
-                Some('&') => accept!(reader, Token::Redir(None, RedirOp::GREATAND)),
-                _ => Ok(Some(Token::Redir(None, RedirOp::GREAT))),
-            }
-        },
-        _ => Ok(None),
-    }
-}
-
-fn amp_tok(reader: &mut CharReader) -> TokenResult {
-    if !is_match!(reader.current, Some('&')) {
-        return Ok(None);
-    }
-
-    reader.advance();
-    match reader.current {
-        Some('&') => accept!(reader, Token::And),
-        _ => {
-            return Ok(Some(Token::Async))
-        }
-    }
-}
-
-fn pipe_tok(reader: &mut CharReader) -> TokenResult {
-    if !is_match!(reader.current, Some('|')) {
-        return Ok(None);
-    }
-
-    reader.advance();
-    match reader.current {
-        Some('|') => accept!(reader, Token::Or),
-        _ => {
-            return Ok(Some(Token::Pipe))
-        }
-    }
-}
-
-fn escaped_tok(reader: &mut CharReader) -> TokenResult {
-    if let Some('\\') = reader.current {
-        let prev: usize = reader.pos;
-        reader.advance();
-        if let Some(c) = reader.current {
-            reader.advance();
-            return Ok(Some(Token::String(c.to_string())));
-        } else {
-            reader.backtrack(prev);
-            return Ok(None);
-        }
-    }
-    Ok(None)
-}
-
-fn lit_string_tok(reader: &mut CharReader) -> TokenResult {
-    if !is_match!(reader.current, Some('\'')) {
-        return Ok(None)
-    }
-
-    let mut contents = String::new();
-    loop {
-        reader.advance();
-        if let Some(c) = reader.current {
-            if c == '\'' {
-                reader.advance();
-                return Ok(Some(Token::String(contents)));
-            }
-            contents.push(c);
-        } else {
-            return Err(TokenError::Unterminated);
-        }
-    }
-}
-
-fn quotemark_tok(reader: &mut CharReader) -> TokenResult {
-    if !is_match!(reader.current, Some('"')) {
-        return Ok(None);
-    }
-
-    reader.advance();
-    let tokenizers: Vec<_> = vec![escaped_tok as fn(&mut CharReader) -> TokenResult, var_tok];
-    let tokens = try!(tokenize_loop(reader, tokenizers, |reader| {
-        reader.current.and_then(|c| {
-            if c == '"' {
-                None
-            } else {
-                Some(c)
-            }
-        })
-    }));
-
-    if let Some('"') = reader.current {
-        reader.advance();
-        Ok(Some(Token::Quoted(tokens)))
-    } else {
-        Err(TokenError::Unterminated)
-    }
-}
-
-fn var_tok(reader: &mut CharReader) -> TokenResult {
-    if !is_match!(reader.current, Some('$')) {
-        return Ok(None);
-    }
-
-    let mut ident = String::new();
-    loop {
-        reader.advance();
-        match reader.current {
-            Some(c) if c.is_alphanumeric() => {
-                ident.push(c);
-            },
-            _ => {
-                return if ident.is_empty() {
-                    Ok(Some(Token::String("$".to_string())))
                 } else {
-                    Ok(Some(Token::Var(ident)))
+                    unterminated = true;
+                    skip_char = true;
                 }
-            },
-        }
-    }
-}
+            }
+            // Rule 4b
+            else if c == '\"' {
+                quote_nesting ^= 1;
+            }
+            // Rule 4c
+            else if c == '\'' {
+                token.push(c);
+                unterminated = true;
+                while let Some(next) = chars.next() {
+                    if next == '\'' {
+                        unterminated = false;
+                        c = next;
+                        break;
+                    }
+                    token.push(next);
+                }
+            }
+            // Rule 5
+            else if c == '$' {
+                let lookahead1 = chars.peek().map(|c| *c);
+                if let Some(next1) = lookahead1 {
+                    if next1 == '{' {
+                        token.push(c);
+                        chars.next();
+                        c = next1;
+                        param_nesting += 1;
+                    } else if next1 == '(' {
+                        token.push(c);
+                        chars.next();
+                        c = next1;
+                        let lookahead2 = chars.peek().map(|c| *c);
+                        if let Some(next2) = lookahead2 {
+                            if next2 == '(' {
+                                token.push(next1);
+                                chars.next();
+                                c = next2;
+                                arithmetic_nesting += 1;
+                            } else {
+                                command_nesting += 1;
+                            }
+                        } else {
+                            command_nesting += 1;
+                        }
+                    }
+                }
+            }
+            else if c == '}' {
+                if param_nesting > 0 {
+                    param_nesting -= 1;
+                }
+            }
+            else if c == ')' {
+                let lookahead = chars.peek().map(|c| *c);
+                if let Some(next) = lookahead {
+                    if next == ')' {
+                        if arithmetic_nesting > 0 {
+                            arithmetic_nesting -= 1;
+                        }
+                        token.push(c);
+                        chars.next();
+                        c = next;
+                    } else if command_nesting > 0 {
+                        command_nesting -= 1;
+                    }
+                } else if command_nesting > 0 {
+                    command_nesting -= 1;
+                }
+            }
+            // Rule 6
+            else if is_op_prefix(c) && arithmetic_nesting + command_nesting + param_nesting + quote_nesting == 0 {
+                if c == '>' || c == '<' {
+                    if let Ok(n) = token.parse::<i32>() {
+                        tokens.push(Token::IONumber(n));
+                    } else {
+                        add_token(&mut tokens, &token);
+                    }
+                } else {
+                    add_token(&mut tokens, &token);
+                }
+                token.clear();
+                state = TokenState::OPERATOR;
+            }
+            // Rule 7
+            else if c == '\n' && arithmetic_nesting + command_nesting + param_nesting + quote_nesting == 0 {
+                add_token(&mut tokens, &token);
+                tokens.push(Token::LineBreak);
+                token.clear();
+                skip_char = true;
+            }
+            // Rule 8
+            else if c.is_whitespace() && arithmetic_nesting + command_nesting + param_nesting + quote_nesting == 0 {
+                add_token(&mut tokens, &token);
+                token.clear();
+                skip_char = true;
+            }
+            // Rule 10
+            else if c == '#' {
+                add_token(&mut tokens, &token);
+                token.clear();
 
-fn num_tok(reader: &mut CharReader) -> TokenResult {
-    if !is_match!(reader.current, Some(_)) {
-        return Ok(None);
-    }
-    let c = reader.current.unwrap();
-    if !c.is_digit(10) {
-        return Ok(None);
-    }
-
-    let mut num = String::new();
-    num.push(c);
-    loop {
-        reader.advance();
-        let current = reader.current;
-        match current {
-            Some(c) if c.is_digit(10) => {
-                num.push(c);
-            },
-            Some('<') | Some('>') => {
-                let redir = try!(redir_tok(reader));
-                let n = num.parse::<i32>().unwrap();
-                return match redir {
-                    Some(Token::Redir(_, op)) => Ok(Some(Token::Redir(Some(n), op))),
-                    _ => unreachable!(),
-                };
-            },
-            _ => {
-                return Ok(Some(Token::String(num)));
-            },
-        }
-    }
-}
-
-fn tokenize_loop<F: Fn(&mut CharReader) -> Option<char>>(
-    reader: &mut CharReader,
-    tokenizers: Vec<fn(&mut CharReader) -> TokenResult>,
-    loop_cond: F)
--> Result<Vec<Token>, TokenError> {
-
-    let mut tokens = Vec::<Token>::new();
-    let mut word = String::new();
-
-    while let Some(c) = loop_cond(reader) {
-        let mut token = None;
-        for tokenizer in tokenizers.iter() {
-            token = try!(tokenizer(reader));
-            if token.is_some() {
-                break;
+                while let Some(next) = chars.next() {
+                    if next == '\n' {
+                        break;
+                    }
+                }
+                tokens.push(Token::LineBreak);
+                skip_char = true;
             }
         }
-
-        if token.is_none() {
-            word.push(c);
-            reader.advance();
-            continue;
-        } else if !word.is_empty() {
-            tokens.push(Token::String(word.clone()));
-            word.clear();
+        if !skip_char {
+            token.push(c);
         }
-        tokens.push(token.unwrap());
     }
-    if !word.is_empty() {
-        tokens.push(Token::String(word.clone()));
+    if state == TokenState::OPERATOR {
+        println!("op: {}", token);
+        let op = operator_table.get(token.as_str()).unwrap().clone();
+        tokens.push(op);
+    } else {
+        add_token(&mut tokens, &token);
     }
 
-    Ok(tokens)
-}
-
-pub fn tokenize(s: &str) -> Result<Vec<Token>, TokenError> {
-    let mut reader = CharReader::new(s.to_string());
-    let tokenizers: Vec<_> = vec!(
-        ws_tok as fn(&mut CharReader) -> TokenResult,
-        escaped_tok,
-        lit_string_tok,
-        quotemark_tok,
-        redir_tok,
-        num_tok,
-        var_tok,
-        eql_tok,
-        pipe_tok,
-        amp_tok,
-        semi_tok,
-    );
-
-    tokenize_loop(&mut reader, tokenizers, |reader| reader.current)
+    unterminated |= arithmetic_nesting + command_nesting + param_nesting + quote_nesting > 0;
+    (tokens, unterminated)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn to_string(s: &str) -> Token {
-        Token::String(s.to_string())
+    fn word(s: &str) -> Token {
+        Token::Word(s.to_string())
     }
 
     #[test]
-    fn parse_single_word() {
-        let word = tokenize("cmd").unwrap();
-        assert_eq!(word, vec![to_string("cmd")]);
+    fn tokenize_single_word() {
+        let (tokens, _) = tokenize("cmd");
+        assert_eq!(tokens, vec![word("cmd")]);
     }
 
     #[test]
-    fn parse_multiple_words() {
-        let word = tokenize("hello world").unwrap();
-        assert_eq!(word, vec![to_string("hello"), Token::Whitespace, to_string("world")]);
+    fn tokenize_multiple_words() {
+        let (tokens, _) = tokenize("hello world");
+        assert_eq!(tokens, vec![word("hello"), word("world")]);
     }
 
     #[test]
-    fn parse_leading_ws() {
-        let word = tokenize("    cmd").unwrap();
-        assert_eq!(word, vec![Token::Whitespace, to_string("cmd")]);
+    fn tokenize_leading_ws() {
+        let (tokens, _) = tokenize("    cmd");
+        assert_eq!(tokens, vec![word("cmd")]);
     }
 
     #[test]
-    fn parse_trailing_ws() {
-        let word = tokenize("cmd    ").unwrap();
-        assert_eq!(word, vec![to_string("cmd"), Token::Whitespace]);
+    fn tokenize_trailing_ws() {
+        let (tokens, _) = tokenize("cmd    ");
+        assert_eq!(tokens, vec![word("cmd")]);
     }
 
     #[test]
-    fn parse_empty_cmd() {
-        let word = tokenize("").unwrap();
-        assert_eq!(word, Vec::new());
+    fn tokenize_escaped_ws() {
+        let (tokens, _) = tokenize(r#"hello\ world"#);
+        assert_eq!(tokens, vec![word("hello world")]);
     }
 
     #[test]
-    fn parse_quotemark() {
-        let t = tokenize(r#""hello world""#).unwrap();
-        assert_eq!(t, vec![Token::Quoted(
-                vec![to_string("hello world")]
-                )]);
+    fn tokenize_empty_cmd() {
+        let (tokens, _) = tokenize("");
+        assert_eq!(tokens, Vec::new());
     }
 
     #[test]
-    fn parse_string_with_escaped() {
-        let t = tokenize(r#""hello \"""#).unwrap();
-        assert_eq!(t, vec![Token::Quoted(
-                vec![to_string("hello "), to_string("\"")]
-                )]);
+    fn tokenize_double_quote() {
+        let input = r#""hello world""#;
+        let (t, _) = tokenize(input);
+        assert_eq!(t, vec![word(input)]);
     }
 
     #[test]
-    fn parse_unterminated_string() {
-        let t = tokenize(r#""hello"#);
-        assert!(t.is_err());
+    fn tokenize_string_with_escaped() {
+        let input = r#""hello \"""#;
+        let (t, _) = tokenize(input);
+        assert_eq!(t, vec![word(input)]);
     }
 
     #[test]
-    fn parse_literal_string() {
-        let t = tokenize("'hello world'").unwrap();
-        assert_eq!(t, vec![to_string("hello world")]);
+    fn tokenize_unterminated_double_quote() {
+        let (_, unterminated) = tokenize(r#""hello"#);
+        assert!(unterminated);
     }
 
     #[test]
-    fn parse_literal_string_unclosed_fails() {
-        let t = tokenize("'hello");
-        assert!(t.is_err());
+    fn tokenize_literal_string() {
+        let input = "'hello world'";
+        let (t, _) = tokenize(input);
+        assert_eq!(t, vec![word(input)]);
     }
 
     #[test]
-    fn parse_var() {
-        let t = tokenize("$ABC").unwrap();
-        assert_eq!(t, vec![Token::Var("ABC".to_string())]);
+    fn tokenize_untermianted_single_quote() {
+        let (_, unterminated) = tokenize("'hello");
+        assert!(unterminated);
     }
 
     #[test]
-    fn parse_escaped_var() {
-        let t = tokenize(r#"\$ABC"#).unwrap();
-        assert_eq!(t, vec![to_string("$"), to_string("ABC")]);
+    fn tokenize_var() {
+        let input = "$ABC";
+        let (t, _) = tokenize(input);
+        assert_eq!(t, vec![word(input)]);
     }
 
     #[test]
-    fn parse_escaped_string() {
-        let t = tokenize(r#"\"hello"#).unwrap();
-        assert_eq!(t, vec![to_string("\""), to_string("hello")]);
+    fn tokenize_escaped_var() {
+        let input = r#"\$ABC"#;
+        let (t, _) = tokenize(input);
+        assert_eq!(t, vec![word(input)]);
     }
 
     #[test]
-    fn parse_number() {
-        let t = tokenize("123").unwrap();
-        assert_eq!(t, vec![to_string("123")]);
+    fn tokenize_escaped_string() {
+        let input = r#"\"hello"#;
+        let (t, _) = tokenize(input);
+        assert_eq!(t, vec![word(input)]);
     }
 
     #[test]
-    fn parse_redirects() {
-        let mut t = tokenize(">").unwrap();
-        assert_eq!(t, vec![Token::Redir(None, RedirOp::GREAT)]);
-
-        t = tokenize(">>").unwrap();
-        assert_eq!(t, vec![Token::Redir(None, RedirOp::DGREAT)]);
-
-        t = tokenize(">&").unwrap();
-        assert_eq!(t, vec![Token::Redir(None, RedirOp::GREATAND)]);
-
-        t = tokenize(">|").unwrap();
-        assert_eq!(t, vec![Token::Redir(None, RedirOp::CLOBBER)]);
-
-        t = tokenize("<").unwrap();
-        assert_eq!(t, vec![Token::Redir(None, RedirOp::LESS)]);
-
-        t = tokenize("<<").unwrap();
-        assert_eq!(t, vec![Token::Redir(None, RedirOp::DLESS)]);
-
-        t = tokenize("<<-").unwrap();
-        assert_eq!(t, vec![Token::Redir(None, RedirOp::DLESSDASH)]);
-
-        t = tokenize("<&").unwrap();
-        assert_eq!(t, vec![Token::Redir(None, RedirOp::LESSAND)]);
-
-        t = tokenize("<>").unwrap();
-        assert_eq!(t, vec![Token::Redir(None, RedirOp::LESSGREAT)]);
+    fn tokenize_number() {
+        let (t, _) = tokenize("123");
+        assert_eq!(t, vec![word("123")]);
     }
 
     #[test]
-    fn parse_numbered_redirect() {
-        let t = tokenize("3<").unwrap();
-        assert_eq!(t, vec![Token::Redir(Some(3), RedirOp::LESS)]);
+    fn tokenize_redirects() {
+        let (t, _) = tokenize(">");
+        assert_eq!(t, vec![Token::GREAT]);
+
+        let (t, _) = tokenize(">>");
+        assert_eq!(t, vec![Token::DGREAT]);
+
+        let (t, _) = tokenize(">&");
+        assert_eq!(t, vec![Token::GREATAND]);
+
+        let (t, _) = tokenize(">|");
+        assert_eq!(t, vec![Token::CLOBBER]);
+
+        let (t, _) = tokenize("<");
+        assert_eq!(t, vec![Token::LESS]);
+
+        let (t, _) = tokenize("<<");
+        assert_eq!(t, vec![Token::DLESS]);
+
+        let (t, _) = tokenize("<<-");
+        assert_eq!(t, vec![Token::DLESSDASH]);
+
+        let (t, _) = tokenize("<&");
+        assert_eq!(t, vec![Token::LESSAND]);
+
+        let (t, _) = tokenize("<>");
+        assert_eq!(t, vec![Token::LESSGREAT]);
+    }
+
+    #[test]
+    fn tokenize_numbered_redirect() {
+        let (t, _) = tokenize("3<");
+        assert_eq!(t, vec![Token::IONumber(3), Token::LESS]);
+    }
+
+    #[test]
+    fn tokenize_parameter() {
+        let (t, _) = tokenize("A${B}C");
+        assert_eq!(t, vec![word("A${B}C")]);
+    }
+
+    #[test]
+    fn tokenize_unterminated_parameter() {
+        let (_, unterminated) = tokenize("${A");
+        assert!(unterminated);
+    }
+
+    #[test]
+    fn tokenize_command() {
+        let input = "$(echo \"foo\")";
+        let (t, _) = tokenize(input);
+        assert_eq!(t, vec![word(input)]);
+    }
+
+    #[test]
+    fn tokenize_unterminated_command() {
+        let (_, unterminated) = tokenize("$(A");
+        assert!(unterminated);
+    }
+
+    #[test]
+    fn tokenize_arithmetic() {
+        let input = "$((1 + 1))";
+        let (t, _) = tokenize(input);
+        assert_eq!(t, vec![word(input)]);
+    }
+
+    #[test]
+    fn tokenize_unterminated_arithmetic() {
+        let (_, unterminated) = tokenize("$((1");
+        assert!(unterminated);
+    }
+
+    #[test]
+    fn tokenize_parameter_in_command() {
+        let input = "$(echo ${A} B)";
+        let (t, _) = tokenize(input);
+        assert_eq!(t, vec![word(input)]);
+    }
+
+    #[test]
+    fn tokenize_comment() {
+        let input = "# abc";
+        let (t, _) = tokenize(input);
+        assert_eq!(t, vec![Token::LineBreak]);
+    }
+
+    #[test]
+    fn tokenize_line_continuation() {
+        let input = r#"cmd \"#;
+        let (t, unterminated) = tokenize(input);
+        assert!(unterminated);
+        assert_eq!(t, vec![word("cmd")]);
     }
 }
