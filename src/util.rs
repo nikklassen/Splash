@@ -1,5 +1,4 @@
 use std::fmt::Debug;
-use std::result;
 
 #[macro_export]
 macro_rules! is_match {
@@ -21,16 +20,6 @@ macro_rules! hash_map(
         }
      };
 );
-
-pub fn sequence<T, E>(v: Vec<Result<T, E>>) -> result::Result<Vec<T>, E>
-where T: Debug, E: Debug + Clone {
-    for res in v.iter() {
-        if let &Err(ref e) = res {
-            return Err(e.clone());
-        }
-    }
-    Ok(v.into_iter().map(|i| i.unwrap()).collect())
-}
 
 #[macro_export]
 macro_rules! print_err {
