@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 use std::collections::VecDeque;
-use std::io::Error;
+use std::io::{stderr, Write, Error};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use libc::STDIN_FILENO;
@@ -118,7 +118,7 @@ impl JobTable {
                 // Don't print info for jobs that were never managed or terminated in the foreground
                 // TODO killed notification (exit reasons can be something other than "finished")
                 if job.id != 0 && !job.foreground {
-                    info!("\n[{}] done\t{}", job.id, job.cmd);
+                    println!("\n[{}] done\t{}", job.id, job.cmd);
                 }
                 continue;
             }
@@ -129,7 +129,7 @@ impl JobTable {
             if self.jobs[i].id == 0 {
                 self.set_job_id(i);
                 let job = &self.jobs[i];
-                info!("suspended\t{}", job.cmd);
+                println!("suspended\t{}", job.cmd);
             }
         }
 
@@ -168,7 +168,7 @@ impl JobTable {
         let job_ref = self.jobs.back().unwrap().clone();
         if !job_ref.foreground {
             let id = self.set_job_id(job_ref.id as usize);
-            info!("[{}] {}", id, job_ref.pid);
+            println!("[{}] {}", id, job_ref.pid);
         }
         unsafe {
             use libc;
@@ -205,7 +205,7 @@ pub fn print_jobs() {
             JobStatus::Running => "running",
             JobStatus::New => "new",
         };
-        info!("[{}] {}\t{}", job.id, status, job.cmd);
+        println!("[{}] {}\t{}", job.id, status, job.cmd);
     }
 }
 
@@ -215,7 +215,7 @@ pub fn start_job(foreground: bool) -> Result<i32, Error> {
         job_table.last_job().map(|j| j.clone())
     };
     if let Some(ref job) = job_entry {
-        info!("[{}]  {} continued\t{}", job.id,
+        println!("[{}]  {} continued\t{}", job.id,
               if foreground { "-" } else { "+" }, job.cmd);
         let res = if foreground {
             foreground_job(job)
@@ -223,21 +223,21 @@ pub fn start_job(foreground: bool) -> Result<i32, Error> {
             background_job(job)
         };
         if let Err(e) = res {
-            error!("splash: {}", e);
+            print_err!("{}", e);
             Ok(2)
         } else {
             Ok(0)
         }
     } else {
-        warn!("{}: no current job",
-              if foreground { "fg" } else { "bg" });
+        writeln!(stderr(), "{}: no current job",
+              if foreground { "fg" } else { "bg" }).unwrap();
         Ok(1)
     }
 }
 
 pub fn add_job(p: &Process) -> Result<Job, String> {
     if p.prog == None {
-        debug!("bad process to job: {:?}", p);
+        print_err!("bad process to job: {:?}", p);
         return Err("Empty process can't be jobbed".to_string());
     }
 
@@ -316,15 +316,17 @@ fn join_job(job: &Job) -> JobStatus {
                 let exit_code = if prog_exit_code < 0 {
                     match Errno::from_i32(!prog_exit_code as i32) {
                         Errno::ENOENT => {
-                            warn!("{}: command not found", job.cmd)
+                            writeln!(stderr(), "{}: command not found", job.cmd).unwrap();
                         }
                         Errno::EACCES => {
-                            warn!("permission denied: {}", job.cmd)
+                            print_err!("permission denied: {}", job.cmd)
                         }
                         Errno::ENOTDIR => {
-                            warn!("not a directory: {}", job.cmd)
+                            print_err!("not a directory: {}", job.cmd)
                         }
-                        e => warn!("{}: {}", e.desc(), job.cmd),
+                        e => {
+                            writeln!(stderr(), "{}: {}", e.desc(), job.cmd).unwrap();
+                        }
                     }
                     127
                 } else {
@@ -352,11 +354,10 @@ fn join_job(job: &Job) -> JobStatus {
             }
             Err(nix::Error::Sys(nix::Errno::EINTR)) => {
                 // This is not normal but possible, try again
-                debug!("Child stopped");
                 continue;
             }
             Err(e) => {
-                error!("could not wait for pid {} due to {}", job.pid, e);
+                print_err!("could not wait for pid {} due to {}", job.pid, e);
                 break;
             }
         }

@@ -1,5 +1,4 @@
-use std::io::{self, Write};
-use std::fmt::{Display, Debug};
+use std::fmt::Debug;
 use std::result;
 
 #[macro_export]
@@ -33,11 +32,22 @@ where T: Debug, E: Debug + Clone {
     Ok(v.into_iter().map(|i| i.unwrap()).collect())
 }
 
-#[inline]
-pub fn write_err<D: Display>(s: &D) {
-    let stderr = io::stderr();
-    let res = writeln!(stderr.lock(), "{}", s);
-    res.unwrap();
+#[macro_export]
+macro_rules! print_err {
+    ($fmt:expr) => {{
+        use std::io::{self, Write};
+        let stderr = io::stderr();
+        let exe = ::std::env::args().next().unwrap_or("splash".to_owned());
+        let res = writeln!(stderr.lock(), concat!("{}: ", $fmt), exe);
+        res.unwrap();
+    }};
+    ($fmt:expr, $($arg:tt)*) => {{
+        use std::io::{self, Write};
+        let stderr = io::stderr();
+        let exe = ::std::env::args().next().unwrap_or("splash".to_owned());
+        let res = writeln!(stderr.lock(), concat!("{}: ", $fmt), exe, $($arg)*);
+        res.unwrap();
+    }};
 }
 
 pub fn show_err<S, T: Debug>(e: T) -> Result<S, String> {

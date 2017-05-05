@@ -235,9 +235,9 @@ fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
         let (pipe_out, pipe_in) = unistd::pipe().unwrap();
 
         if has_input(&p.io) {
-            util::write_err(&format!(
+            print_err!(
                 "splash: Ignoring piped input for {}; programs may not behave as expected.",
-                p.prog.clone().unwrap_or("assignment".to_string())));
+                p.prog.clone().unwrap_or("assignment".to_string()));
         }
         // insert at the front so these file descriptors will be overwritten by anything later
         p.io.insert(0, (STDOUT_FILENO, IOOp::Replace(pipe_in)));
@@ -252,9 +252,9 @@ fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
         last_proc.async = pipeline.async;
 
         if num_procs > 1 && has_input(&last_proc.io) {
-            util::write_err(&format!(
+            print_err!(
                 "splash: Ignoring piped input for {}; programs may not behave as expected.",
-                last_proc.prog.clone().unwrap_or("assignment".to_string())));
+                last_proc.prog.clone().unwrap_or("assignment".to_string()));
         }
         let stdout_dup = IOOp::Duplicate(STDOUT_FILENO);
         last_proc.io.insert(0, (STDOUT_FILENO, stdout_dup));
@@ -308,7 +308,7 @@ where F: FnOnce() -> Result<i32, Error> {
         let exit_code = match result {
             Ok(ecode) => ecode,
             Err(e) => {
-                error!("{:?}", e);
+                print_err!("{:?}", e);
                 127
             }
         };

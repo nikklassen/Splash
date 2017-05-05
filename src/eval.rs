@@ -6,7 +6,6 @@ use env::UserEnv;
 use input::token::*;
 use input::{prompt, parser, tokenizer};
 use process;
-use util::write_err;
 
 #[derive(Debug)]
 pub enum InputReader {
@@ -68,7 +67,7 @@ pub fn eval(mut input_reader: InputReader, mut builtins: BuiltinMap) {
                     if let Token::Word(ref s) = tokens[i+1] {
                         here_docs.push((tokens[i].clone(), s.clone()));
                     } else {
-                        write_err(&"splash: here docs must be strings".to_string());
+                        print_err!("here docs must be strings");
                         continue;
                     }
                     i += 2;
@@ -93,7 +92,7 @@ pub fn eval(mut input_reader: InputReader, mut builtins: BuiltinMap) {
                     content.push_str("\n");
                 } else {
                     // Replicate other shells' behaviour, just ignore this heredoc
-                    error!("warning: here-document delimited by end-of-file (wanted `EOF')");
+                    print_err!("warning: here-document delimited by end-of-file (wanted `EOF')");
                     input.push(content);
                     break;
                 }
@@ -103,7 +102,7 @@ pub fn eval(mut input_reader: InputReader, mut builtins: BuiltinMap) {
         let parsed = parser::parse(tokens, &mut input);
 
         if let Err(e) = parsed {
-            write_err(&format!("splash: {}", e));
+            print_err!("{}", e);
             continue;
         }
 
@@ -116,7 +115,7 @@ pub fn eval(mut input_reader: InputReader, mut builtins: BuiltinMap) {
             let res = process::run_processes(&mut builtins, command, &mut user_env);
             match res {
                 Err(e) => {
-                    write_err(&format!("splash: {}", e));
+                    print_err!("{}", e);
                 },
                 Ok(n) => {
                     last_status = n;

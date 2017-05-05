@@ -8,9 +8,6 @@ extern crate tempfile;
 extern crate lazy_static;
 
 #[macro_use]
-extern crate log;
-
-#[macro_use]
 pub mod util;
 
 #[cfg(test)]
@@ -22,7 +19,6 @@ pub mod env;
 mod eval;
 pub mod file;
 pub mod job;
-pub mod logger;
 pub mod process;
 pub mod signals;
 pub mod input;
@@ -43,14 +39,6 @@ use signals::initialize_signals;
 fn main() {
     use std::env;
 
-    let log_level = if cfg!(debug_assertions) {
-        logger::LogLevel::Debug
-    } else {
-        logger::LogLevel::Info
-    };
-    // TODO should be basename of args[0]
-    logger::init("splash", log_level).unwrap();
-
     let args: Vec<String> = env::args().collect();
 
     let mut opts = Options::new();
@@ -60,7 +48,7 @@ fn main() {
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
         Err(f) => {
-            error!("{}", f);
+            print_err!("{}", f);
             ::std::process::exit(1);
         },
     };

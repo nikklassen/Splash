@@ -14,7 +14,6 @@ debug = true
 debug = true
 
 [dependencies]
-log = "^0.3.7"
 combine = "^2.3"
 getopts = "^0.2.4"
 lazy_static = "^0.2.8"

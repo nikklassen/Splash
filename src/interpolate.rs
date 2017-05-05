@@ -36,7 +36,7 @@ fn run_command(input: &str) -> String {
                     }
                 }
                 Err(e) => {
-                    error!("{:?}", e);
+                    print_err!("{:?}", e);
                     break;
                 }
             }

@@ -32,7 +32,7 @@ pub fn getline(cont: bool) -> Option<String> {
             break;
         } else {
             if !cont {
-                info!("exit");
+                println!("exit");
             }
             return None;
         }

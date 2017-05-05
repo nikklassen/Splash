@@ -265,7 +265,6 @@ mod tests {
     fn parse_cmd_no_args() {
         let input = tokenize("cmd", false).0;
         let cmd = parse(input, &mut vec![]).unwrap();
-        warn!("{:?}", cmd);
         assert_eq!(cmd, to_command_list(Op::Cmd {
             prog: Some(to_word("cmd")),
             args: Vec::new(),
