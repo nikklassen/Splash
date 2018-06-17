@@ -11,6 +11,7 @@ use std::thread;
 use std::time::Duration;
 
 use nix::sys::signal;
+use nix::unistd::Pid;
 use tempfile::NamedTempFile;
 
 #[allow(dead_code)]
@@ -218,7 +219,7 @@ fn no_stop_with_sigtstp() {
     let mut splash_cmd = Command::new("splash");
     let mut splash = set_build_dir(&mut splash_cmd).spawn().unwrap();
 
-    let pid = splash.id() as i32;
+    let pid = Pid::from_raw(splash.id() as i32);
 
     signal::kill(pid, signal::SIGTSTP).unwrap();
     thread::sleep(Duration::from_millis(100));

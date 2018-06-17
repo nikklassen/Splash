@@ -1,4 +1,4 @@
-use nix::fcntl::{self, OFlag};
+use nix::fcntl::OFlag;
 use libc::{STDOUT_FILENO, STDIN_FILENO};
 
 use super::token::Token;
@@ -64,12 +64,12 @@ pub fn build_io_redirect(((io_number_opt, redir_op), io_file): ((Option<Token>, 
             unreachable!()
         }).unwrap_or(if redir_op.is_out() { STDOUT_FILENO } else { STDIN_FILENO });
     let target = match redir_op {
-        Token::LESS => Redir::File(io_file, fcntl::O_RDONLY),
+        Token::LESS => Redir::File(io_file, OFlag::O_RDONLY),
         Token::LESSAND => Redir::Copy(parse_fd(io_file)),
-        Token::LESSGREAT => Redir::File(io_file, fcntl::O_RDWR | fcntl::O_CREAT),
+        Token::LESSGREAT => Redir::File(io_file, OFlag::O_RDWR | OFlag::O_CREAT),
 
-        Token::GREAT | Token::CLOBBER => Redir::File(io_file, fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_TRUNC),
-        Token::DGREAT => Redir::File(io_file, fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_APPEND),
+        Token::GREAT | Token::CLOBBER => Redir::File(io_file, OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC),
+        Token::DGREAT => Redir::File(io_file, OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_APPEND),
         Token::GREATAND => Redir::Copy(parse_fd(io_file)),
         Token::DLESS | Token::DLESSDASH => Redir::Temp(String::new()),
         _ => unreachable!(),

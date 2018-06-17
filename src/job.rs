@@ -2,11 +2,12 @@ use std::collections::VecDeque;
 use std::io::{stderr, Write, Error};
 
 use lazy_static;
-use libc::STDIN_FILENO;
+use libc;
 use nix::errno::Errno;
 use nix::sys::signal;
-use nix::sys::wait::{self, WaitStatus};
+use nix::sys::wait::{self, WaitStatus, WaitPidFlag};
 use nix::{self, unistd};
+use nix::unistd::Pid;
 
 use process::Process;
 use util::{self, SharedTable};
@@ -24,8 +25,8 @@ pub enum JobStatus {
 #[derive(Debug, Clone)]
 pub struct Job {
     pub id: i32,
-    pub pid: i32,
-    pub pgid: i32,
+    pub pid: Pid,
+    pub pgid: Pid,
     // TODO this should be set from the original user input
     pub cmd: String,
     pub status: JobStatus,
@@ -34,8 +35,8 @@ pub struct Job {
 }
 
 impl Job {
-    pub fn new(pid: i32, pgid: i32, cmd: &str, async: bool) -> Self {
-        let status = if pid == unistd::getpid() {
+    pub fn new(pid: Pid, pgid: Pid, cmd: &str, async: bool) -> Self {
+        let status = if pid == Pid::this() {
             // The job can't still be running if we're at this point
             JobStatus::Done(0)
         } else {
@@ -63,14 +64,14 @@ impl Job {
             Ok(WaitStatus::Signaled(_, sig, _)) => JobStatus::Done(128 + sig as i32),
             Ok(WaitStatus::Stopped(_, _)) => JobStatus::Stopped,
             Ok(WaitStatus::Continued(_)) => {
-                self.foreground = unistd::tcgetpgrp(STDIN_FILENO)
+                self.foreground = unistd::tcgetpgrp(libc::STDIN_FILENO)
                     .and_then(|pgid| Ok(self.pgid == pgid))
                     .unwrap_or(false);
                 JobStatus::Running
             }
             // Process is shy and doesn't want to say anything (that means no change) or this failed for some reason
             // (don't change anything)
-            Ok(WaitStatus::StillAlive) | Ok(WaitStatus::PtraceEvent(_, _, _)) | Err(_) => self.status,
+            Ok(WaitStatus::StillAlive) | Ok(WaitStatus::PtraceEvent(_, _, _)) | Ok(WaitStatus::PtraceSyscall(_)) | Err(_) => self.status,
         };
     }
 }
@@ -251,7 +252,7 @@ pub fn foreground_job(job: &Job) -> Result<i32, String> {
         return Err("Job is already in the foreground".to_string());
     }
     let shell_pgid = unistd::getpgrp();
-    try!(unistd::tcsetpgrp(STDIN_FILENO, job.pgid).or_else(util::show_err));
+    try!(unistd::tcsetpgrp(libc::STDIN_FILENO, job.pgid).or_else(util::show_err));
 
     if job.status == JobStatus::Stopped {
         resume_job(job)?;
@@ -259,7 +260,7 @@ pub fn foreground_job(job: &Job) -> Result<i32, String> {
 
     let ret = wait_for_job(job);
 
-    unistd::tcsetpgrp(STDIN_FILENO, shell_pgid).expect("Unable to foreground splash");
+    unistd::tcsetpgrp(libc::STDIN_FILENO, shell_pgid).expect("Unable to foreground splash");
 
     ret
 }
@@ -298,27 +299,8 @@ pub fn wait_for_job(job: &Job) -> Result<i32, String> {
 fn join_job(job: &Job) -> JobStatus {
     let mut status = JobStatus::New;
     loop {
-        match wait::waitpid(job.pid, Some(wait::WUNTRACED)) {
-            Ok(WaitStatus::Exited(_pid, prog_exit_code)) => {
-                let exit_code = if prog_exit_code < 0 {
-                    match Errno::from_i32(!prog_exit_code as i32) {
-                        Errno::ENOENT => {
-                            writeln!(stderr(), "{}: command not found", job.cmd).unwrap();
-                        }
-                        Errno::EACCES => {
-                            print_err!("permission denied: {}", job.cmd)
-                        }
-                        Errno::ENOTDIR => {
-                            print_err!("not a directory: {}", job.cmd)
-                        }
-                        e => {
-                            writeln!(stderr(), "{}: {}", e.desc(), job.cmd).unwrap();
-                        }
-                    }
-                    127
-                } else {
-                    prog_exit_code as i32
-                };
+        match wait::waitpid(job.pid, Some(WaitPidFlag::WUNTRACED)) {
+            Ok(WaitStatus::Exited(_pid, exit_code)) => {
                 status = JobStatus::Done(exit_code);
                 break;
             }
@@ -334,12 +316,12 @@ fn join_job(job: &Job) -> JobStatus {
                 status = JobStatus::Stopped;
                 break;
             }
-            Ok(WaitStatus::PtraceEvent(_, _, _)) => continue,
-            Err(nix::Error::Sys(nix::Errno::ECHILD)) => {
+            Ok(WaitStatus::PtraceEvent(_, _, _)) | Ok(WaitStatus::PtraceSyscall(_)) => continue,
+            Err(nix::Error::Sys(Errno::ECHILD)) => {
                 // This is bad, I don't know how we could get in this state
                 panic!("No child to wait for");
             }
-            Err(nix::Error::Sys(nix::Errno::EINTR)) => {
+            Err(nix::Error::Sys(Errno::EINTR)) => {
                 // This is not normal but possible, try again
                 continue;
             }
@@ -357,8 +339,8 @@ fn resume_job(job: &Job) -> Result<(), String> {
         .or(Err(format!("Failed to continue job {}", job.id)))
 }
 
-fn get_job_status(pid: i32) -> nix::Result<WaitStatus> {
-    wait::waitpid(pid, Some(wait::WUNTRACED | wait::WNOHANG))
+fn get_job_status(pid: Pid) -> nix::Result<WaitStatus> {
+    wait::waitpid(pid, Some(WaitPidFlag::WUNTRACED | WaitPidFlag::WNOHANG))
 }
 
 pub fn update_job_list() {

@@ -5,9 +5,11 @@ use std::os::unix::io::IntoRawFd;
 use std::path::Path;
 use std::{iter, process};
 
-use libc::{STDOUT_FILENO, STDIN_FILENO};
-use nix::sys::stat;
-use nix::unistd::{self, ForkResult, execvp, getpid, setpgid, isatty};
+use libc::{STDIN_FILENO, STDOUT_FILENO};
+use nix;
+use nix::errno::Errno;
+use nix::sys::stat::Mode;
+use nix::unistd::{self, ForkResult, execvp, getpid, setpgid, isatty, Pid};
 use nix::fcntl::{self, OFlag};
 use tempfile::tempfile;
 
@@ -33,8 +35,8 @@ pub enum IOOp {
 
 #[derive(Debug)]
 pub struct Process {
-    pub pid: i32,
-    pub pgid: i32,
+    pub pid: Pid,
+    pub pgid: Pid,
     pub prog: Option<String>,
     pub args: Vec<String>,
     pub io: Vec<(i32, IOOp)>,
@@ -58,8 +60,8 @@ impl Process {
         }).collect();
 
         Process {
-            pid: 0,
-            pgid: 0,
+            pid: Pid::from_raw(0),
+            pgid: Pid::from_raw(0),
             prog: prog,
             args: args,
             io: new_io,
@@ -103,7 +105,7 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: CommandList, user_env: 
     };
 
     let mut procs = try!(pipeline_to_processes(pipeline).or_else(|e| Err(format!("{}", e))));
-    let mut pgid = 0;
+    let mut pgid = Pid::from_raw(0);
     let mut builtin_result: Result<i32, String> = Ok(0);
 
     // TODO all threads need to be spawned then the last waited for
@@ -173,7 +175,7 @@ fn add_redirects_to_io(io: &Vec<(i32, IOOp)>) -> Result<(), String> {
     for &(ref io_number, ref io_redirect) in io {
         let mut fd = match io_redirect {
             &IOOp::File(ref name, ref flags) => {
-                let mode = stat::S_IRUSR | stat::S_IWUSR | stat::S_IRGRP | stat::S_IROTH;
+                let mode = Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP | Mode::S_IROTH;
                 let path = Path::new(&name);
                 let file = try!(fcntl::open(path, *flags, mode).or_else(util::show_err));
                 let new_fd = Fd::new(file);
@@ -259,13 +261,13 @@ fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
 }
 
 
-fn fork_process<F>(process: &mut Process, mut pgid: i32, cmd: F)
+fn fork_process<F>(process: &mut Process, mut pgid: Pid, cmd: F)
 where F: FnOnce() -> Result<i32, Error> {
     let f = unistd::fork().unwrap();
     if let ForkResult::Parent { child } = f {
         process.pid = child;
         if is_interactive() {
-            if pgid == 0 {
+            if pgid == Pid::from_raw(0) {
                 pgid = child;
             }
             setpgid(child, pgid).unwrap();
@@ -286,7 +288,7 @@ where F: FnOnce() -> Result<i32, Error> {
 
         if is_interactive() {
             let pid = getpid();
-            if pgid == 0 {
+            if pgid == Pid::from_raw(0) {
                 pgid = pid;
             }
             setpgid(pid, pgid).unwrap();
@@ -312,7 +314,7 @@ where F: FnOnce() -> Result<i32, Error> {
     }
 }
 
-fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: i32, has_pipeline: bool) -> Result<i32, String> {
+fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: Pid, has_pipeline: bool) -> Result<i32, String> {
     // BUG need to fork or revert i/o
     if !has_pipeline {
         if let Err(e) = add_redirects_to_io(&process.io) {
@@ -331,7 +333,7 @@ fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: i32, has_pi
     }
 }
 
-fn fork_proc(process: &mut Process, pgid: i32) {
+fn fork_proc(process: &mut Process, pgid: Pid) {
     let prog = process.prog.clone().unwrap();
     let args = process.args.clone();
     fork_process(process, pgid, move || {
@@ -342,9 +344,13 @@ fn fork_proc(process: &mut Process, pgid: i32) {
 
         let err = execvp(&CString::new(prog.as_bytes()).unwrap(), args).unwrap_err();
 
-        // Take bitwise NOT so we can differentiate an internal error
-        // from the process legitimately exiting with that status
-        Ok(!(err.errno() as i8) as i32)
+        match err {
+            nix::Error::Sys(Errno::ENOENT) => print_err!("command not found: {}", prog),
+            nix::Error::Sys(Errno::EACCES) => print_err!("permission denied: {}", prog),
+            nix::Error::Sys(Errno::ENOTDIR) => print_err!("not a directory: {}", prog),
+            _ => {},
+        };
+        Ok(127)
     });
 }
 

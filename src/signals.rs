@@ -1,8 +1,7 @@
 //! Functions for signal handling within splash
 use std::sync::atomic::{AtomicIsize, Ordering, ATOMIC_ISIZE_INIT};
 
-pub use nix::sys::signal::*;
-use nix::sys::signal;
+use nix::sys::signal::{self, SaFlags};
 
 use job;
 
@@ -47,7 +46,7 @@ pub fn initialize_signals() {
 
     sig_action = signal::SigAction::new(
         signal::SigHandler::Handler(handle_sigchld),
-        signal::SA_NOCLDSTOP | signal::SA_RESTART,
+        SaFlags::SA_NOCLDSTOP | SaFlags::SA_RESTART,
         signal::SigSet::all());
     unsafe {
         if let Err(res) = signal::sigaction(signal::SIGCHLD, &sig_action) {

@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
 
 use libc::{self, STDIN_FILENO};
+use nix::sys::signal;
 use nix::unistd::isatty;
 
 use bindings::readline;
@@ -118,9 +119,9 @@ where T: Into<String> {
             fds.insert(libc::fileno(readline::rl_instream));
         }
 
-        let r = select::select(select::FD_SETSIZE, Some(&mut fds), None, None, None);
+        let r = select::select(Some(1), Some(&mut fds), None, None, None);
         if r.is_err() {
-            if r != Err(::nix::Error::Sys(::nix::Errno::EINTR)) {
+            if r != Err(::nix::Error::Sys(::nix::errno::Errno::EINTR)) {
                 unsafe {
                     readline::rl_callback_handler_remove();
                 }
@@ -132,7 +133,7 @@ where T: Into<String> {
                 return Some("".to_string());
             }
             // ^C
-            else if signals::get_last_signal() == signals::SIGINT as i32 {
+            else if signals::get_last_signal() == signal::SIGINT as i32 {
                 // print a blank line to put the next prompt on the next line
                 println!("\r");
 

@@ -245,7 +245,7 @@ pub fn parse(tokens: Vec<Token>, heredocs: &mut Vec<String>) -> Result<CompleteC
 #[cfg(test)]
 mod tests {
     use libc::{STDOUT_FILENO, STDIN_FILENO};
-    use nix::fcntl;
+    use nix::fcntl::OFlag;
     use input::tokenizer::tokenize;
     use super::*;
 
@@ -366,9 +366,9 @@ mod tests {
     fn parse_redir_out() {
         let input = tokenize("cmd > file.txt >> log.txt 2>&1", false).0;
         let cmd = parse(input, &mut vec![]).unwrap();
-        let write_flags = fcntl::O_WRONLY | fcntl::O_CREAT;
-        let trunc_flags = write_flags | fcntl::O_TRUNC;
-        let append_flags = write_flags | fcntl::O_APPEND;
+        let write_flags = OFlag::O_WRONLY | OFlag::O_CREAT;
+        let trunc_flags = write_flags | OFlag::O_TRUNC;
+        let append_flags = write_flags | OFlag::O_APPEND;
         assert_eq!(cmd, to_command_list(Op::Cmd {
             prog: Some(to_word("cmd")),
             args: Vec::new(),
@@ -394,7 +394,7 @@ mod tests {
     fn parse_redir_in() {
         let input = tokenize("cmd < file.txt <&3", false).0;
         let cmd = parse(input, &mut vec![]).unwrap();
-        let read_flags = fcntl::O_RDONLY;
+        let read_flags = OFlag::O_RDONLY;
         assert_eq!(cmd, to_command_list(Op::Cmd {
             prog: Some(to_word("cmd")),
             args: Vec::new(),
@@ -416,7 +416,7 @@ mod tests {
     fn parse_redir_prefix() {
         let input = tokenize("> file.txt cmd", false).0;
         let cmd = parse(input, &mut vec![]).unwrap();
-        let write_flags = fcntl::O_WRONLY | fcntl::O_CREAT | fcntl::O_TRUNC;
+        let write_flags = OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC;
         assert_eq!(cmd, to_command_list(Op::Cmd {
             prog: Some(to_word("cmd")),
             args: Vec::new(),
