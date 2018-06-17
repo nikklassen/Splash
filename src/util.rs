@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::borrow::Borrow;
 use std::fmt::Debug;
 
 #[macro_export]
@@ -53,4 +55,21 @@ pub fn join_str(vs: &Vec<String>, sep: &str) -> String {
         s.push_str(&v)
     });
     s
+}
+
+pub struct SharedTable<T> {
+    table_ref: Arc<Mutex<T>>,
+}
+
+impl<T> SharedTable<T> {
+    pub fn new(t: T) -> Self {
+        SharedTable {
+            table_ref: Arc::new(Mutex::new(t))
+        }
+    }
+
+    pub fn get_inner(&self) -> MutexGuard<T> {
+        // If something went wrong and poisoned the lock we're screwed anyways so may as well just panic in all the threads
+        (self.table_ref.borrow() as &Mutex<T>).lock().unwrap()
+    }
 }

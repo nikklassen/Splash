@@ -1,7 +1,5 @@
-use std::borrow::Borrow;
 use std::collections::VecDeque;
 use std::io::{stderr, Write, Error};
-use std::sync::{Arc, Mutex, MutexGuard};
 
 use lazy_static;
 use libc::STDIN_FILENO;
@@ -11,7 +9,7 @@ use nix::sys::wait::{self, WaitStatus};
 use nix::{self, unistd};
 
 use process::Process;
-use util;
+use util::{self, SharedTable};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum JobStatus {
@@ -82,26 +80,8 @@ pub struct JobTable {
     jobs: VecDeque<Job>,
 }
 
-#[derive(Clone)]
-pub struct SharedJobTable {
-    job_table_ref: Arc<Mutex<JobTable>>,
-}
-
-impl SharedJobTable {
-    pub fn new() -> Self {
-        SharedJobTable {
-            job_table_ref: Arc::new(Mutex::new(JobTable::new()))
-        }
-    }
-
-    pub fn get_inner(&self) -> MutexGuard<JobTable> {
-        // If something went wrong and poisoned the lock we're screwed anyways so may as well just panic in all the threads
-        (self.job_table_ref.borrow() as &Mutex<JobTable>).lock().unwrap()
-    }
-}
-
 lazy_static! {
-    static ref JOB_TABLE: SharedJobTable = SharedJobTable::new();
+    static ref JOB_TABLE: SharedTable<JobTable> = SharedTable::new(JobTable::new());
 }
 
 pub fn initialize_job_table() {

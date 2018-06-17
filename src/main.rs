@@ -22,6 +22,7 @@ pub mod job;
 pub mod process;
 pub mod signals;
 pub mod input;
+pub mod options;
 mod interpolate;
 
 #[allow(dead_code, non_camel_case_types)]
@@ -35,6 +36,7 @@ use getopts::Options;
 use eval::InputReader;
 use builtin::BuiltinMap;
 use signals::initialize_signals;
+use options::SOpt;
 
 fn main() {
     use std::env;
@@ -58,6 +60,8 @@ fn main() {
         return;
     }
 
+    options::initialize_options();
+
     let input_method = if matches.opt_present("c") {
         let command = matches.opt_str("c").unwrap();
         InputReader::Command(command.lines().map(str::to_string).collect())
@@ -69,18 +73,21 @@ fn main() {
         InputReader::Stdin
     };
 
-    let builtins = initialize_term();
+    let interactive = is_match!(input_method, InputReader::Stdin);
+    options::set_opt(SOpt::Interactive, interactive);
+
+    let builtins = initialize_term(interactive);
     eval::eval(input_method, builtins);
 }
 
-fn initialize_term() -> BuiltinMap {
+fn initialize_term(mut interactive: bool) -> BuiltinMap {
     use libc::STDIN_FILENO;
     use nix::unistd;
     use nix::sys::signal;
 
     // See if we are running interactively
     let shell_terminal = STDIN_FILENO;
-    let interactive = unistd::isatty(shell_terminal).unwrap();
+    interactive = interactive && unistd::isatty(shell_terminal).unwrap();
     let mut shell_pgid;
 
     job::initialize_job_table();

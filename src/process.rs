@@ -19,6 +19,7 @@ use input::ast::*;
 use interpolate;
 use signals;
 use util;
+use options::{self, SOpt};
 
 // The main reason for essentially recreating Redir here is because
 // we need to add the "Replace" condition.
@@ -354,7 +355,6 @@ fn fork_proc(process: &mut Process, pgid: i32) {
 }
 
 fn is_interactive() -> bool {
-    // BUG should get where we are getting commands from, which is not always STDIN
-    isatty(STDIN_FILENO).unwrap_or(false)
+    options::get_opt(SOpt::Interactive) && isatty(STDIN_FILENO).unwrap_or(false)
 }
 
