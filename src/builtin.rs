@@ -13,6 +13,12 @@ pub trait Builtin {
     fn run(&mut self, args: &[String]) -> io::Result<i32>;
 }
 
+impl<F> Builtin for F where F: FnMut(&[String]) -> io::Result<i32> {
+    fn run(&mut self, args: &[String]) -> io::Result<i32> {
+        self(args)
+    }
+}
+
 pub type BuiltinMap = HashMap<String, Box<Builtin>>;
 
 struct Cd {
@@ -77,77 +83,48 @@ impl Builtin for Cd {
     }
 }
 
-struct Pwd;
-impl Builtin for Pwd {
-    fn run(&mut self, _args: &[String]) -> io::Result<i32> {
-        println!("{}", env::var("PWD").unwrap_or(String::new()));
-        SUCCESS
-    }
+fn pwd(_args: &[String]) -> io::Result<i32> {
+    println!("{}", env::var("PWD").unwrap_or(String::new()));
+    SUCCESS
 }
 
-struct Echo;
-impl Builtin for Echo {
-    fn run(&mut self, args: &[String]) -> io::Result<i32> {
-        let mut opts = Options::new();
+fn echo(args: &[String]) -> io::Result<i32> {
+    let mut opts = Options::new();
 
-        opts.optflag("n", "", "Suppress new lines");
+    opts.optflag("n", "", "Suppress new lines");
 
-        let matches = match opts.parse(args) {
-            Ok(m) => m,
-            Err(_) => { return Err(
-                    io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "Unable to parse arguments.")) },
-        };
+    let matches = match opts.parse(args) {
+        Ok(m) => m,
+        Err(_) => { return Err(
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Unable to parse arguments.")) },
+    };
 
-        let remaining_args = matches.free.join(" ");
+    let remaining_args = matches.free.join(" ");
 
-        if matches.opt_present("n") {
-            print!("{}", remaining_args);
-            try!(io::stdout().flush());
-        } else {
-            println!("{}", remaining_args);
-        }
-        SUCCESS
+    if matches.opt_present("n") {
+        print!("{}", remaining_args);
+        try!(io::stdout().flush());
+    } else {
+        println!("{}", remaining_args);
     }
+    SUCCESS
 }
 
-struct Fg;
-impl Builtin for Fg {
-    fn run(&mut self, _args: &[String]) -> io::Result<i32> {
-        let res = job::start_job(true)?;
-        Ok(res)
-    }
+fn fg(_args: &[String]) -> io::Result<i32> {
+    let res = job::start_job(true)?;
+    Ok(res)
 }
 
-struct Bg;
-impl Builtin for Bg {
-    fn run(&mut self, _args: &[String]) -> io::Result<i32> {
-        let res = job::start_job(false)?;
-        Ok(res)
-    }
+fn bg(_args: &[String]) -> io::Result<i32> {
+    let res = job::start_job(false)?;
+    Ok(res)
 }
 
-struct Jobs;
-impl Builtin for Jobs {
-    fn run(&mut self, _args: &[String]) -> io::Result<i32> {
-        job::print_jobs();
-        Ok(0)
-    }
-}
-
-struct True;
-impl Builtin for True {
-    fn run(&mut self, _args: &[String]) -> io::Result<i32> {
-        Ok(0)
-    }
-}
-
-struct False;
-impl Builtin for False {
-    fn run(&mut self, _args: &[String]) -> io::Result<i32> {
-        Ok(1)
-    }
+fn jobs(_args: &[String]) -> io::Result<i32> {
+    job::print_jobs();
+    Ok(0)
 }
 
 macro_rules! add_builtins {
@@ -159,19 +136,24 @@ macro_rules! add_builtins {
     }}
 }
 
+fn builtin_true(_args: &[String]) -> io::Result<i32> {
+    SUCCESS
+}
+
 pub fn init_builtins() -> BuiltinMap {
     let mut builtins = HashMap::new();
     add_builtins!(
         builtins,
         [
         ("cd", Cd::new()),
-        ("echo", Echo),
-        ("pwd", Pwd),
-        ("fg", Fg),
-        ("bg", Bg),
-        ("jobs", Jobs),
-        ("true", True),
-        ("false", False)
+        ("echo", echo),
+        ("pwd", pwd),
+        ("fg", fg),
+        ("bg", bg),
+        ("jobs", jobs),
+        ("true", builtin_true),
+        ("false", |_args: &[String]| Ok(1)),
+        (":", builtin_true)
         ]);
     builtins
 }
