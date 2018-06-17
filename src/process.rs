@@ -315,11 +315,11 @@ where F: FnOnce() -> Result<i32, Error> {
 }
 
 fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: Pid, has_pipeline: bool) -> Result<i32, String> {
-    // BUG need to fork or revert i/o
-    if !has_pipeline {
-        if let Err(e) = add_redirects_to_io(&process.io) {
-            return Err(e);
-        }
+    let has_redirects = process.io.len() != 2 ||
+        !is_match!(process.io[0], (0, IOOp::Duplicate(0))) ||
+        !is_match!(process.io[1], (1, IOOp::Duplicate(1)));
+
+    if !has_pipeline && !has_redirects {
         process.pid = getpid();
         cmd.run(&process.args[..]).or_else(util::show_err)
     } else {
