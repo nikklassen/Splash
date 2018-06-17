@@ -318,6 +318,7 @@ where F: FnOnce() -> Result<i32, Error> {
 }
 
 fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: i32, has_pipeline: bool) -> Result<i32, String> {
+    // BUG need to fork or revert i/o
     if !has_pipeline {
         if let Err(e) = add_redirects_to_io(&process.io) {
             return Err(e);
@@ -353,6 +354,7 @@ fn fork_proc(process: &mut Process, pgid: i32) {
 }
 
 fn is_interactive() -> bool {
+    // BUG should get where we are getting commands from, which is not always STDIN
     isatty(STDIN_FILENO).unwrap_or(false)
 }
 

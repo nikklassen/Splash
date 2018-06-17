@@ -83,6 +83,8 @@ fn initialize_term() -> BuiltinMap {
     let interactive = unistd::isatty(shell_terminal).unwrap();
     let mut shell_pgid;
 
+    job::initialize_job_table();
+
     initialize_signals();
 
     let builtins = builtin::init_builtins();

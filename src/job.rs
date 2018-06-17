@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use std::io::{stderr, Write, Error};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use lazy_static;
 use libc::STDIN_FILENO;
 use nix::errno::Errno;
 use nix::sys::signal;
@@ -101,6 +102,12 @@ impl SharedJobTable {
 
 lazy_static! {
     static ref JOB_TABLE: SharedJobTable = SharedJobTable::new();
+}
+
+pub fn initialize_job_table() {
+    // Prevents a deadlock that can occur in the SIGCHLD handler under some
+    // conditions if it is accessing the job table for the first time
+    lazy_static::initialize(&JOB_TABLE);
 }
 
 impl JobTable {
