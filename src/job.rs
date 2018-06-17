@@ -240,7 +240,7 @@ where F: FnOnce(&mut Job) -> () {
     let mut inner = JOB_TABLE.get_inner();
     let maybe_job = inner.jobs.iter_mut().find(|j| j.id == job_id);
     let ret = maybe_job.is_some();
-    if let Some(mut job) = maybe_job {
+    if let Some(job) = maybe_job {
         f(job);
     }
     ret

@@ -15,7 +15,7 @@ fn is_op_prefix(c: char) -> bool {
     }
 }
 
-fn add_token(mut tokens: &mut Vec<Token>, s: &str) {
+fn add_token(tokens: &mut Vec<Token>, s: &str) {
     if s.len() > 0 {
         tokens.push(Token::Word(s.to_owned()));
     }

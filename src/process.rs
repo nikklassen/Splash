@@ -156,13 +156,7 @@ pub fn exit(errno: i32) {
     process::exit(errno);
 }
 
-macro_rules! str_vec {
-    ( $( $name: expr ),* ) => {
-        (vec![ $(String::from($name)),* ])
-    }
-}
-
-fn update_env(p: &Process, mut user_env: &mut UserEnv) {
+fn update_env(p: &Process, user_env: &mut UserEnv) {
     for assignment in p.env.iter() {
         if let &CmdPrefix::Assignment { ref lhs, ref rhs } = assignment {
             let entry = user_env.vars.entry(lhs.clone())
@@ -249,7 +243,7 @@ fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
 
     // End the borrow of procs before we return it
     {
-        let mut last_proc = procs.last_mut().unwrap();
+        let last_proc = procs.last_mut().unwrap();
         last_proc.async = pipeline.async;
 
         if num_procs > 1 && has_input(&last_proc.io) {
