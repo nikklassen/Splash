@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::env;
 use std::io::{Read, Write};
 use std::os::unix::process::ExitStatusExt;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::Duration;
 
@@ -36,7 +36,9 @@ fn run_in_splash_with_env(shell_cmd: &str, env: HashMap<String, String>) -> CmdR
     input.flush().unwrap();
 
     let mut cmd = Command::new("splash");
-    let _ = cmd.arg(&input.path());
+    let _ = cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .arg(&input.path());
 
     set_build_dir(&mut cmd);
     for (var, val) in env {

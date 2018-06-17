@@ -57,11 +57,23 @@ fn run_command(input: &str) -> String {
     }
 }
 
-fn parameter_expansion(t: &String, user_env: &UserEnv) -> Result<String, String> {
+fn split_fields(word: &String, user_env: &UserEnv) -> Vec<String> {
+    let ifs = user_env.get_var("IFS");
+    word.split(|c| ifs.contains(c))
+        .filter(|s| s.len() > 0)
+        .map(str::to_owned)
+        .collect()
+}
+
+fn parameter_expansion(t: &String, user_env: &UserEnv, is_assignment: bool) -> Result<Vec<String>, String> {
     let mut s = String::new();
+    let mut words = Vec::new();
+
     let mut chars = t.chars().peekable();
     let mut is_lit = false;
+    let mut is_quoted = false;
     let mut escape = false;
+
     loop {
         match chars.next() {
             Some('$') => {
@@ -74,8 +86,12 @@ fn parameter_expansion(t: &String, user_env: &UserEnv) -> Result<String, String>
             },
             Some(c) => {
                 // TODO better quote handling
-                if c == '\'' {
-                    is_lit = !is_lit;
+                if !escape {
+                    if c == '\'' {
+                        is_lit = !is_lit;
+                    } else if c == '\"' {
+                        is_quoted = !is_quoted;
+                    }
                 }
                 escape = c == '\\';
                 s.push(c);
@@ -86,71 +102,70 @@ fn parameter_expansion(t: &String, user_env: &UserEnv) -> Result<String, String>
             },
         }
 
+        let result;
         let next = chars.peek().map(|c| *c);
-        if let Some(c) = next {
-            if c != '{' && c != '(' {
-                let param_name = if c.is_digit(10) {
-                    chars.next();
-                    c.to_string()
-                } else {
-                    chars.by_ref().take_while(|c| *c == '_' || c.is_alphanumeric()).collect()
-                };
-                let param = user_env.vars
-                    .get(&param_name)
-                    .map(|value| value.clone())
-                    .unwrap_or_else(|| {
-                        env::var(&param_name)
-                            .unwrap_or(String::new())
-                    });
+        if next.map(|c| c != '{' && c != '(').unwrap_or(false) {
+            let c = next.unwrap();
+            let param_name = if c.is_digit(10) {
+                chars.next();
+                c.to_string()
+            } else {
+                chars.by_ref().take_while(|c| *c == '_' || c.is_alphanumeric()).collect()
+            };
+            let param = user_env.get_var(&param_name);
+            result = param;
+        } else {
+            let rest: String = iter::once('$').chain(chars.clone()).collect();
+            let (tokens, _) = tokenize(&rest, true);
+            let to_expand = if let Some(&Token::Word(ref s)) = tokens.first() {
+                s.clone()
+            } else {
+                unreachable!()
+            };
 
-                s.push_str(&param);
-                continue;
-            }
+            let _ = chars.by_ref().skip(to_expand.len()).collect::<String>();
+            result = if to_expand.starts_with(&"$((") {
+                // TODO arithmetic
+                String::new()
+            } else if to_expand.starts_with(&"$(") {
+                let input = &to_expand[2..to_expand.len() - 1];
+                run_command(input)
+            } else if to_expand.starts_with(&"${") {
+                let chars = to_expand.chars();
+                let param_name: String = chars.clone()
+                    .skip(2)
+                    .take_while(|c| *c == '_' || c.is_alphanumeric())
+                    .collect();
+
+                let chars = chars.skip(param_name.len() + 2);
+                // Only character remaining should be the trailing }
+                if chars.count() > 1 {
+                    // TODO more complicated variable manipulation
+                    return Err("Bad substitution".to_string());
+                }
+
+                user_env.get_var(&param_name)
+            } else {
+                unreachable!()
+            };
         }
 
-        let rest: String = iter::once('$').chain(chars.clone()).collect();
-        let (tokens, _) = tokenize(&rest, true);
-        let to_expand = if let Some(&Token::Word(ref s)) = tokens.first() {
-            s.clone()
+        if is_quoted || is_assignment {
+            s.push_str(&result);
         } else {
-            unreachable!()
-        };
-
-        let _ = chars.by_ref().skip(to_expand.len()).collect::<String>();
-        let result: String = if to_expand.starts_with(&"$((") {
-            // TODO arithmetic
-            String::new()
-        } else if to_expand.starts_with(&"$(") {
-            let input = &to_expand[2..to_expand.len() - 1];
-            run_command(input)
-        } else if to_expand.starts_with(&"${") {
-            let chars = to_expand.chars();
-            let param_name: String = chars.clone()
-                .skip(2)
-                .take_while(|c| *c == '_' || c.is_alphanumeric())
-                .collect();
-
-            let chars = chars.skip(param_name.len() + 2);
-            // Only character remaining should be the trailing }
-            if chars.count() > 1 {
-                // TODO more complicated variable manipulation
-                return Err("Bad substitution".to_string());
+            let fields = split_fields(&result, user_env);
+            if fields.len() == 1 {
+                s.push_str(&fields[0]);
+            } else if fields.len() > 1 {
+                s.push_str(&fields[0]);
+                words.push(s.clone());
+                words.extend(fields[1..fields.len()-1].iter().cloned());
+                s = fields.last().unwrap().to_owned();
             }
-
-            let param = user_env.vars
-                .get(&param_name)
-                .map(|value| value.clone())
-                .unwrap_or_else(|| {
-                    env::var(&param_name)
-                        .unwrap_or(String::new())
-                });
-            param
-        } else {
-            unreachable!()
-        };
-        s.push_str(&result);
+        }
     }
-    Ok(s)
+    words.push(s.clone());
+    Ok(words)
 }
 
 fn get_user_home(name: &str) -> Option<String> {
@@ -233,22 +248,31 @@ fn quote_removal(word: &String) -> String {
         .collect()
 }
 
-fn expand_word(word: &String, user_env: &UserEnv, is_assignment: bool) -> Result<String, String> {
-    let mut s = tilde_expansion(&word, is_assignment)?;
-    s = parameter_expansion(&s, user_env)?;
-    s = quote_removal(&s);
-    Ok(s)
+fn expand_word(word: &String, user_env: &UserEnv, is_assignment: bool) -> Result<Vec<String>, String> {
+    let s = tilde_expansion(&word, is_assignment)?;
+    let mut words = parameter_expansion(&s, user_env, is_assignment)?;
+    words = words.into_iter()
+        .map(|s| quote_removal(&s))
+        .collect();
+    Ok(words)
 }
 
 pub fn expand(p: &mut Process, user_env: &UserEnv) -> Result<(), String> {
+    let mut new_args = Vec::new();
     if p.prog.is_some() {
         let expanded = expand_word(p.prog.as_ref().unwrap(), user_env, false)?;
-        p.prog = Some(expanded);
+        p.prog = expanded.first().map(|s| s.clone());
+        new_args = expanded[1..].iter().cloned().collect();
     }
-    p.args = p.args.iter().map(|arg| expand_word(arg, user_env, false)).collect::<Result<_, _>>()?;
+    let expanded_args = p.args.iter()
+        .map(|arg| expand_word(arg, user_env, false))
+        .collect::<Result<Vec<_>, _>>()?;
+    new_args.extend(expanded_args.into_iter().flat_map(|v| v));
+    p.args = new_args;
     for ref mut prefix in p.env.iter_mut() {
         if let &mut CmdPrefix::Assignment { ref mut rhs, .. } = *prefix {
-            *rhs = expand_word(rhs, user_env, true)?;
+            // No field splitting on assignment fields, so this is just one word
+            *rhs = expand_word(rhs, user_env, true).map(|ws| ws[0].clone())?;
         }
     }
     Ok(())
@@ -267,23 +291,28 @@ mod tests {
     fn make_test_env() -> UserEnv {
         let mut user_env = UserEnv::new();
         user_env.vars.insert("TEST".to_string(), val());
+        user_env.vars.insert("IFS".to_string(), " \t\n".to_string());
         user_env
+    }
+
+    fn expand_basic(s: &String) -> String {
+        let user_env = make_test_env();
+        let mut words = expand_word(s, &user_env, false).unwrap();
+        words.remove(0)
     }
 
     #[test]
     fn no_expansions() {
-        let user_env = make_test_env();
         let toks = "hello".to_string();
-        let word = expand_word(&toks, &user_env, false).unwrap();
+        let word = expand_basic(&toks);
 
         assert_eq!(word, toks);
     }
 
     #[test]
     fn expand_env_var() {
-        let user_env = make_test_env();
         let toks = "$HOME".to_string();
-        let word = expand_word(&toks, &user_env, false).unwrap();
+        let word = expand_basic(&toks);
 
         let home = env::var("HOME").unwrap_or(String::new());
         assert_eq!(word, home);
@@ -291,52 +320,46 @@ mod tests {
 
     #[test]
     fn expand_user_var() {
-        let user_env = make_test_env();
         let toks = "$TEST".to_string();
-        let word = expand_word(&toks, &user_env, false).unwrap();
+        let word = expand_basic(&toks);
         assert_eq!(word, val());
     }
 
     #[test]
     fn expand_quoted() {
-        let user_env = make_test_env();
         let toks = r#""$TEST""#.to_string();
-        let word = expand_word(&toks, &user_env, false).unwrap();
+        let word = expand_basic(&toks);
         assert_eq!(word, val());
     }
 
     #[test]
     fn no_expand_var_in_single_quotes() {
-        let user_env = make_test_env();
         let toks = "'$TEST'".to_string();
-        let word = expand_word(&toks, &user_env, true).unwrap();
+        let word = expand_basic(&toks);
 
         assert_eq!(word, "$TEST".to_string());
     }
 
     #[test]
     fn expand_tilde() {
-        let user_env = make_test_env();
         let toks = "~".to_string();
-        let word = expand_word(&toks, &user_env, false).unwrap();
+        let word = expand_basic(&toks);
         let home = env::var("HOME").unwrap();
         assert_eq!(word, home);
     }
 
     #[test]
     fn expand_tilde_with_slash() {
-        let user_env = make_test_env();
         let toks = "~/.config".to_string();
-        let word = expand_word(&toks, &user_env, false).unwrap();
+        let word = expand_basic(&toks);
         let home = env::var("HOME").unwrap();
         assert_eq!(word, home + "/.config");
     }
 
     #[test]
     fn expand_tilde_user() {
-        let user_env = make_test_env();
         let toks = "~root/.config".to_string();
-        let word = expand_word(&toks, &user_env, false).unwrap();
+        let word = expand_basic(&toks);
         assert_eq!(word, "/root/.config".to_string());
     }
 
@@ -349,29 +372,35 @@ mod tests {
     }
 
     #[test]
-    fn expand_tilde_after_semi() {
+    fn expand_tilde_after_semi_assignment() {
         let user_env = make_test_env();
         let toks = "a:~".to_string();
-        let word = expand_word(&toks, &user_env, true).unwrap();
+        let words = expand_word(&toks, &user_env, true).unwrap();
 
         let home = env::var("HOME").unwrap();
-        assert_eq!(word, "a:".to_string() + &home);
+        assert_eq!(words[0], "a:".to_string() + &home);
     }
 
     #[test]
     fn expand_tilde_after_semi_with_name() {
         let user_env = make_test_env();
         let toks = "a:~root:b".to_string();
-        let word = expand_word(&toks, &user_env, true).unwrap();
+        let words = expand_word(&toks, &user_env, true).unwrap();
 
-        assert_eq!(word, "a:/root:b".to_string());
+        assert_eq!(words[0], "a:/root:b".to_string());
+    }
+
+    #[test]
+    fn no_expand_tilde_after_semi_assignment() {
+        let toks = "a:~".to_string();
+        let word = expand_basic(&toks);
+        assert_eq!(word, "a:~");
     }
 
     #[test]
     fn expand_parameter() {
-        let user_env = make_test_env();
         let toks = "${TEST}".to_string();
-        let word = expand_word(&toks, &user_env, true).unwrap();
+        let word = expand_basic(&toks);
 
         assert_eq!(word, val());
     }
@@ -380,7 +409,7 @@ mod tests {
     fn expand_parameter_no_parameter() {
         let user_env = make_test_env();
         let toks = "${!}".to_string();
-        let word = expand_word(&toks, &user_env, true);
+        let word = expand_word(&toks, &user_env, false);
 
         assert!(word.is_err());
     }
@@ -390,17 +419,53 @@ mod tests {
         let mut user_env = make_test_env();
         user_env.vars.insert("0".to_string(), "A".to_string());
         let toks = "$01".to_string();
-        let word = expand_word(&toks, &user_env, true).unwrap();
+        let word = expand_word(&toks, &user_env, false).unwrap();
 
-        assert_eq!(word, "A1".to_string());
+        assert_eq!(word[0], "A1".to_string());
     }
 
     #[test]
     fn retain_escaped_dollar() {
-        let user_env = make_test_env();
         let toks = "\\$TEST".to_string();
-        let word = expand_word(&toks, &user_env, true).unwrap();
+        let word = expand_basic(&toks);
 
         assert_eq!(word, "$TEST".to_string());
+    }
+
+    #[test]
+    fn split_expanded_var() {
+        let mut user_env = make_test_env();
+        user_env.vars.insert("X".to_string(), "A           B".to_string());
+        let toks = "$X".to_string();
+        let words = expand_word(&toks, &user_env, false).unwrap();
+
+        assert_eq!(words, vec!["A".to_string(), "B".to_string()]);
+    }
+
+    #[test]
+    fn no_split_in_quotes() {
+        let mut user_env = make_test_env();
+        let val = "A  B".to_string();
+        user_env.vars.insert("A".to_string(), val.clone());
+        let toks = r#""$A""#.to_string();
+        let words = expand_word(&toks, &user_env, false).unwrap();
+
+        assert_eq!(words, vec![val]);
+    }
+
+    #[test]
+    fn split_command_into_args() {
+        let mut user_env = make_test_env();
+        user_env.vars.insert("X".to_string(), "A           B".to_string());
+        let mut p = Process::new(
+            Some("$X".to_string()),
+            Vec::new(),
+            Vec::new(),
+            Vec::new());
+        let res = expand(&mut p, &user_env);
+
+        assert!(res.is_ok());
+        assert_eq!(p.prog, Some("A".to_string()));
+        assert_eq!(p.args, vec!["B".to_string()]);
     }
 }
