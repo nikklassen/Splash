@@ -152,11 +152,11 @@ impl JobTable {
     }
 
     pub fn add_job(&mut self, job: Job) {
+        let Job { id, pid, foreground, .. } = job;
         self.jobs.push_back(job);
-        let job_ref = self.jobs.back().unwrap().clone();
-        if !job_ref.foreground {
-            let id = self.set_job_id(job_ref.id as usize);
-            println!("[{}] {}", id, job_ref.pid);
+        if !foreground {
+            let jid = self.set_job_id(id as usize);
+            println!("[{}] {}", jid, pid);
         }
         unsafe {
             use libc;
@@ -198,11 +198,8 @@ pub fn print_jobs() {
 }
 
 pub fn start_job(foreground: bool) -> Result<i32, Error> {
-    let job_entry = {
-        let job_table = JOB_TABLE.get_inner();
-        job_table.last_job().map(|j| j.clone())
-    };
-    if let Some(ref job) = job_entry {
+    let job_table = JOB_TABLE.get_inner();
+    if let Some(ref job) = job_table.last_job() {
         println!("[{}]  {} continued\t{}", job.id,
               if foreground { "-" } else { "+" }, job.cmd);
         let res = if foreground {
@@ -224,11 +221,6 @@ pub fn start_job(foreground: bool) -> Result<i32, Error> {
 }
 
 pub fn add_job(p: &Process) -> Result<Job, String> {
-    if p.prog == None {
-        print_err!("bad process to job: {:?}", p);
-        return Err("Empty process can't be jobbed".to_string());
-    }
-
     let cmd = format!("{}", p);
     let new_job = Job::new(p.pid, p.pgid, &cmd, p.async);
     JOB_TABLE.get_inner().add_job(new_job.clone());
@@ -252,7 +244,7 @@ pub fn foreground_job(job: &Job) -> Result<i32, String> {
         return Err("Job is already in the foreground".to_string());
     }
     let shell_pgid = unistd::getpgrp();
-    try!(unistd::tcsetpgrp(libc::STDIN_FILENO, job.pgid).or_else(util::show_err));
+    unistd::tcsetpgrp(libc::STDIN_FILENO, job.pgid).or_else(util::show_err)?;
 
     if job.status == JobStatus::Stopped {
         resume_job(job)?;

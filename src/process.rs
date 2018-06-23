@@ -74,14 +74,13 @@ impl Process {
 use std::fmt;
 impl fmt::Display for Process {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let prog = self.prog.clone().unwrap_or(String::new());
-        if !self.args.is_empty() {
-            write!(f, "{} {}",
-                   prog,
-                   util::join_str(&self.args, " "))
-        } else {
-            write!(f, "{}", prog)
+        if let Some(ref p) = self.prog {
+            write!(f, "{}", p)?;
         }
+        if !self.args.is_empty() {
+            write!(f, "{}", util::join_str(&self.args, " "))?;
+        }
+        Ok(())
     }
 }
 
@@ -104,7 +103,7 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: CommandList, user_env: 
         CommandList::SimpleList(p) => p,
     };
 
-    let mut procs = try!(pipeline_to_processes(pipeline).or_else(|e| Err(format!("{}", e))));
+    let mut procs = pipeline_to_processes(pipeline).or_else(util::show_err)?;
     let mut pgid = Pid::from_raw(0);
     let mut builtin_result: Result<i32, String> = Ok(0);
 
@@ -120,11 +119,11 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: CommandList, user_env: 
         // Interpolate parameters at the last possible moment
         interpolate::expand(&mut p, user_env)?;
 
-        let builtin_entry = builtins.get_mut(p.prog.as_ref().unwrap());
+        let builtin_entry = p.prog.as_ref().and_then(|prog| builtins.get_mut(prog.as_str()));
         if let Some(cmd) = builtin_entry {
             builtin_result = exec_builtin(p, cmd, pgid, has_pipeline);
         } else {
-            fork_proc(p, pgid);
+            fork_proc(p, pgid).or_else(util::show_err)?;
             pgid = p.pgid;
         }
     }
@@ -161,9 +160,7 @@ pub fn exit(errno: i32) {
 fn update_env(p: &Process, user_env: &mut UserEnv) {
     for assignment in p.env.iter() {
         if let &CmdPrefix::Assignment { ref lhs, ref rhs } = assignment {
-            let entry = user_env.vars.entry(lhs.clone())
-                .or_insert(String::new());
-            *entry = rhs.clone();
+            user_env.vars.insert(lhs.clone(), rhs.clone());
         }
     }
 }
@@ -177,21 +174,20 @@ fn add_redirects_to_io(io: &Vec<(i32, IOOp)>) -> Result<(), String> {
             &IOOp::File(ref name, ref flags) => {
                 let mode = Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP | Mode::S_IROTH;
                 let path = Path::new(&name);
-                let file = try!(fcntl::open(path, *flags, mode).or_else(util::show_err));
-                let new_fd = Fd::new(file);
-                new_fd
+                let file = fcntl::open(path, *flags, mode).or_else(util::show_err)?;
+                Fd::new(file)
             },
             &IOOp::Duplicate(fd) => {
                 if fd == *io_number {
                     continue;
                 }
-                try!(Fd::dup(fd))
+                Fd::dup(fd)?
             },
             &IOOp::FromString(ref contents) => {
-                let mut tmpfile = try!(tempfile()
-                                       .or(Err("Could not create temporary file".to_string())));
-                try!(tmpfile.write_all(contents.as_bytes()).or_else(util::show_err));
-                try!(tmpfile.seek(SeekFrom::Start(0)).or_else(util::show_err));
+                let mut tmpfile = tempfile()
+                                       .or(Err("Could not create temporary file".to_string()))?;
+                tmpfile.write_all(contents.as_bytes()).or_else(util::show_err)?;
+                tmpfile.seek(SeekFrom::Start(0)).or_else(util::show_err)?;
                 Fd::new(tmpfile.into_raw_fd())
             },
             &IOOp::Replace(fd) => {
@@ -203,8 +199,8 @@ fn add_redirects_to_io(io: &Vec<(i32, IOOp)>) -> Result<(), String> {
         };
 
         let raw_fd = fd.raw_fd;
-        try!(unistd::dup2(raw_fd, *io_number)
-             .map_err(|_| format!("{}: bad file descriptor", raw_fd)));
+        unistd::dup2(raw_fd, *io_number)
+             .map_err(|_| format!("{}: bad file descriptor", raw_fd))?;
         fd.close();
     }
     Ok(())
@@ -229,12 +225,12 @@ fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
 
     for i in 0..(num_procs - 1) {
         let ref mut p = procs.index_mut(i);
-        let (pipe_out, pipe_in) = unistd::pipe().unwrap();
+        let (pipe_out, pipe_in) = unistd::pipe().or_else(util::show_err)?;
 
         if has_input(&p.io) {
             print_err!(
                 "splash: Ignoring piped input for {}; programs may not behave as expected.",
-                p.prog.clone().unwrap_or("assignment".to_string()));
+                p.prog.as_ref().unwrap_or(&String::from("assignment")));
         }
         // insert at the front so these file descriptors will be overwritten by anything later
         p.io.insert(0, (STDOUT_FILENO, IOOp::Replace(pipe_in)));
@@ -251,7 +247,7 @@ fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
         if num_procs > 1 && has_input(&last_proc.io) {
             print_err!(
                 "splash: Ignoring piped input for {}; programs may not behave as expected.",
-                last_proc.prog.clone().unwrap_or("assignment".to_string()));
+                last_proc.prog.as_ref().unwrap_or(&String::from("assignment")));
         }
         let stdout_dup = IOOp::Duplicate(STDOUT_FILENO);
         last_proc.io.insert(0, (STDOUT_FILENO, stdout_dup));
@@ -261,9 +257,9 @@ fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
 }
 
 
-fn fork_process<F>(process: &mut Process, mut pgid: Pid, cmd: F)
+fn fork_process<F>(process: &mut Process, mut pgid: Pid, cmd: F) -> Result<(), nix::Error>
 where F: FnOnce() -> Result<i32, Error> {
-    let f = unistd::fork().unwrap();
+    let f = unistd::fork()?;
     if let ForkResult::Parent { child } = f {
         process.pid = child;
         if is_interactive() {
@@ -312,6 +308,7 @@ where F: FnOnce() -> Result<i32, Error> {
 
         exit(exit_code);
     }
+    Ok(())
 }
 
 fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: Pid, has_pipeline: bool) -> Result<i32, String> {
@@ -326,19 +323,19 @@ fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: Pid, has_pi
         let args = process.args.clone();
         fork_process(process, pgid, || {
             cmd.run(&args[..])
-        });
+        }).or_else(util::show_err)?;
 
         // This result doesn't actually matter since the forked process will be waited for
         Ok(0)
     }
 }
 
-fn fork_proc(process: &mut Process, pgid: Pid) {
+fn fork_proc(process: &mut Process, pgid: Pid) -> Result<(), nix::Error> {
     let prog = process.prog.clone().unwrap();
     let args = process.args.clone();
     fork_process(process, pgid, move || {
-        let args = &iter::once(prog.clone())
-            .chain(args)
+        let args = &iter::once(&prog)
+            .chain(args.iter())
             .map(|s| CString::new(s.as_bytes()).unwrap())
             .collect::<Vec<_>>()[..];
 
@@ -351,7 +348,7 @@ fn fork_proc(process: &mut Process, pgid: Pid) {
             _ => {},
         };
         Ok(127)
-    });
+    })
 }
 
 fn is_interactive() -> bool {

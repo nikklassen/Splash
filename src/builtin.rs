@@ -19,7 +19,7 @@ impl<F> Builtin for F where F: FnMut(&[String]) -> io::Result<i32> {
     }
 }
 
-pub type BuiltinMap = HashMap<String, Box<Builtin>>;
+pub type BuiltinMap = HashMap<&'static str, Box<Builtin>>;
 
 struct Cd {
     prev_dir: String,
@@ -130,7 +130,7 @@ fn jobs(_args: &[String]) -> io::Result<i32> {
 macro_rules! add_builtins {
     ($map:ident, [ $( ($n:expr, $cmd:expr) ),* ] ) => {{
         $($map.insert(
-                String::from($n),
+                $n,
                 Box::new($cmd) as Box<Builtin>
                 );)*
     }}
