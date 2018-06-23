@@ -1,3 +1,4 @@
+#[macro_use]
 extern crate combine;
 extern crate getopts;
 extern crate libc;
