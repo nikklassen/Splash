@@ -157,13 +157,11 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
                         }
                     }
                 }
-            }
-            else if c == '}' {
+            } else if c == '}' {
                 if param_nesting > 0 {
                     param_nesting -= 1;
                 }
-            }
-            else if c == ')' {
+            } else if c == ')' {
                 let lookahead = chars.peek().map(|c| *c);
                 if let Some(next) = lookahead {
                     if next == ')' {
@@ -181,7 +179,9 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
                 }
             }
             // Rule 6
-            else if is_op_prefix(c) && arithmetic_nesting + command_nesting + param_nesting + quote_nesting == 0 {
+            else if is_op_prefix(c)
+                && arithmetic_nesting + command_nesting + param_nesting + quote_nesting == 0
+            {
                 if c == '>' || c == '<' {
                     if let Ok(n) = token.parse::<i32>() {
                         tokens.push(Token::IONumber(n));
@@ -195,14 +195,18 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
                 state = TokenState::OPERATOR;
             }
             // Rule 7
-            else if c == '\n' && arithmetic_nesting + command_nesting + param_nesting + quote_nesting == 0 {
+            else if c == '\n'
+                && arithmetic_nesting + command_nesting + param_nesting + quote_nesting == 0
+            {
                 add_token(&mut tokens, &token);
                 tokens.push(Token::LineBreak);
                 token.clear();
                 skip_char = true;
             }
             // Rule 8
-            else if c.is_whitespace() && arithmetic_nesting + command_nesting + param_nesting + quote_nesting == 0 {
+            else if c.is_whitespace()
+                && arithmetic_nesting + command_nesting + param_nesting + quote_nesting == 0
+            {
                 add_token(&mut tokens, &token);
                 token.clear();
                 skip_char = true;

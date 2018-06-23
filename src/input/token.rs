@@ -1,4 +1,4 @@
-use std::fmt::{Display, Formatter, Error};
+use std::fmt::{Display, Error, Formatter};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Token {
@@ -29,7 +29,6 @@ pub enum Token {
     Pipe,
 }
 
-
 impl Token {
     pub fn is_out(&self) -> bool {
         match *self {
@@ -41,9 +40,15 @@ impl Token {
 
 pub fn is_redir(t: Token) -> bool {
     match t {
-        Token::GREAT | Token::DGREAT | Token::GREATAND | Token::CLOBBER
-            | Token::LESS | Token::DLESS | Token::DLESSDASH | Token::LESSAND
-            | Token::LESSGREAT => true,
+        Token::GREAT
+        | Token::DGREAT
+        | Token::GREATAND
+        | Token::CLOBBER
+        | Token::LESS
+        | Token::DLESS
+        | Token::DLESSDASH
+        | Token::LESSAND
+        | Token::LESSGREAT => true,
         _ => false,
     }
 }

@@ -1,12 +1,16 @@
-use std::sync::{Arc, Mutex, MutexGuard};
 use std::borrow::Borrow;
 use std::fmt::Debug;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 #[macro_export]
 macro_rules! is_match {
-    ($e: expr, $p: pat) => (
-        if let $p = $e { true } else { false }
-    )
+    ($e:expr, $p:pat) => {
+        if let $p = $e {
+            true
+        } else {
+            false
+        }
+    };
 }
 
 // from http://stackoverflow.com/a/27582993
@@ -47,13 +51,11 @@ pub fn show_err<S, T: Debug>(e: T) -> Result<S, String> {
 
 pub fn join_str(vs: &Vec<String>, sep: &str) -> String {
     let mut s = String::new();
-    for i in 0..vs.len()-1 {
+    for i in 0..vs.len() - 1 {
         s.push_str(&vs[i]);
         s.push_str(sep);
     }
-    vs.last().map(|v| {
-        s.push_str(&v)
-    });
+    vs.last().map(|v| s.push_str(&v));
     s
 }
 
@@ -64,7 +66,7 @@ pub struct SharedTable<T> {
 impl<T> SharedTable<T> {
     pub fn new(t: T) -> Self {
         SharedTable {
-            table_ref: Arc::new(Mutex::new(t))
+            table_ref: Arc::new(Mutex::new(t)),
         }
     }
 

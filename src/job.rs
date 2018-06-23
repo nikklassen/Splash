@@ -1,13 +1,13 @@
 use std::collections::VecDeque;
-use std::io::{stderr, Write, Error};
+use std::io::{stderr, Error, Write};
 
 use lazy_static;
 use libc;
 use nix::errno::Errno;
 use nix::sys::signal;
-use nix::sys::wait::{self, WaitStatus, WaitPidFlag};
-use nix::{self, unistd};
+use nix::sys::wait::{self, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
+use nix::{self, unistd};
 
 use process::Process;
 use util::{self, SharedTable};
@@ -44,7 +44,7 @@ impl Job {
             JobStatus::New
         };
         Job {
-            id: 0, // No id assigned yet
+            id: 0,    // No id assigned yet
             pid: pid, // The pid of the last process in the group
             pgid: pgid,
             cmd: cmd.to_string(),
@@ -71,7 +71,10 @@ impl Job {
             }
             // Process is shy and doesn't want to say anything (that means no change) or this failed for some reason
             // (don't change anything)
-            Ok(WaitStatus::StillAlive) | Ok(WaitStatus::PtraceEvent(_, _, _)) | Ok(WaitStatus::PtraceSyscall(_)) | Err(_) => self.status,
+            Ok(WaitStatus::StillAlive)
+            | Ok(WaitStatus::PtraceEvent(_, _, _))
+            | Ok(WaitStatus::PtraceSyscall(_))
+            | Err(_) => self.status,
         };
     }
 }
@@ -121,7 +124,8 @@ impl JobTable {
             }
         }
 
-        self.jobs.retain(|j| !is_match!(j.status, JobStatus::Done(_)));
+        self.jobs
+            .retain(|j| !is_match!(j.status, JobStatus::Done(_)));
     }
 
     pub fn update_jobs(&mut self) {
@@ -152,15 +156,20 @@ impl JobTable {
     }
 
     pub fn add_job(&mut self, job: Job) {
-        let Job { id, pid, foreground, .. } = job;
+        let Job {
+            id,
+            pid,
+            foreground,
+            ..
+        } = job;
         self.jobs.push_back(job);
         if !foreground {
             let jid = self.set_job_id(id as usize);
             println!("[{}] {}", jid, pid);
         }
         unsafe {
-            use libc;
             use bindings::readline;
+            use libc;
             libc::fflush(readline::rl_outstream);
         }
     }
@@ -200,8 +209,12 @@ pub fn print_jobs() {
 pub fn start_job(foreground: bool) -> Result<i32, Error> {
     let job_table = JOB_TABLE.get_inner();
     if let Some(ref job) = job_table.last_job() {
-        println!("[{}]  {} continued\t{}", job.id,
-              if foreground { "-" } else { "+" }, job.cmd);
+        println!(
+            "[{}]  {} continued\t{}",
+            job.id,
+            if foreground { "-" } else { "+" },
+            job.cmd
+        );
         let res = if foreground {
             foreground_job(job)
         } else {
@@ -214,8 +227,11 @@ pub fn start_job(foreground: bool) -> Result<i32, Error> {
             Ok(0)
         }
     } else {
-        writeln!(stderr(), "{}: no current job",
-              if foreground { "fg" } else { "bg" }).unwrap();
+        writeln!(
+            stderr(),
+            "{}: no current job",
+            if foreground { "fg" } else { "bg" }
+        ).unwrap();
         Ok(1)
     }
 }
@@ -229,7 +245,9 @@ pub fn add_job(p: &Process) -> Result<Job, String> {
 }
 
 fn update_job<F>(job_id: i32, f: F) -> bool
-where F: FnOnce(&mut Job) -> () {
+where
+    F: FnOnce(&mut Job) -> (),
+{
     let mut inner = JOB_TABLE.get_inner();
     let maybe_job = inner.jobs.iter_mut().find(|j| j.id == job_id);
     let ret = maybe_job.is_some();
@@ -257,7 +275,7 @@ pub fn foreground_job(job: &Job) -> Result<i32, String> {
     ret
 }
 
-pub fn background_job(job: &Job) -> Result<i32, String>  {
+pub fn background_job(job: &Job) -> Result<i32, String> {
     if job.status != JobStatus::New {
         resume_job(job)?;
     }
@@ -327,8 +345,7 @@ fn join_job(job: &Job) -> JobStatus {
 }
 
 fn resume_job(job: &Job) -> Result<(), String> {
-    signal::kill(job.pgid, signal::SIGCONT)
-        .or(Err(format!("Failed to continue job {}", job.id)))
+    signal::kill(job.pgid, signal::SIGCONT).or(Err(format!("Failed to continue job {}", job.id)))
 }
 
 fn get_job_status(pid: Pid) -> nix::Result<WaitStatus> {

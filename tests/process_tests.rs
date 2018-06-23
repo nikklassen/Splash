@@ -1,6 +1,6 @@
+extern crate libc;
 extern crate nix;
 extern crate tempfile;
-extern crate libc;
 
 use std::collections::HashMap;
 use std::env;
@@ -17,7 +17,10 @@ use tempfile::NamedTempFile;
 #[allow(dead_code)]
 /// Useful for debugging, only needs to be called in that situation
 fn print_extra_info(output: &Output) {
-    println!("stderr: {}", String::from_utf8(output.stderr.clone()).unwrap());
+    println!(
+        "stderr: {}",
+        String::from_utf8(output.stderr.clone()).unwrap()
+    );
 }
 
 fn set_build_dir(cmd: &mut Command) -> &mut Command {
@@ -37,7 +40,8 @@ fn run_in_splash_with_env(shell_cmd: &str, env: HashMap<String, String>) -> CmdR
     input.flush().unwrap();
 
     let mut cmd = Command::new("splash");
-    let _ = cmd.stdin(Stdio::null())
+    let _ = cmd
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .arg(&input.path());
 
@@ -46,7 +50,8 @@ fn run_in_splash_with_env(shell_cmd: &str, env: HashMap<String, String>) -> CmdR
         cmd.env(var, val);
     }
 
-    let output = cmd.output()
+    let output = cmd
+        .output()
         .unwrap_or_else(|e| panic!("failed to execute process: {}", e));
 
     let stdout = String::from_utf8(output.stdout).unwrap();
@@ -233,9 +238,7 @@ fn no_stop_with_sigtstp() {
 fn delayed_expansion_of_words() {
     let mut env = HashMap::new();
     env.insert("A".to_string(), "A".to_string());
-    let result = run_in_splash_with_env(
-        "A=B | echo $A",
-        env);
+    let result = run_in_splash_with_env("A=B | echo $A", env);
     assert_eq!(result.status, 0);
     assert_eq!(result.stdout, "B\n");
 }

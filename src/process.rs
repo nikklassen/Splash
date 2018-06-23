@@ -1,5 +1,5 @@
 use std::ffi::CString;
-use std::io::{Write, Seek, SeekFrom, Error};
+use std::io::{Error, Seek, SeekFrom, Write};
 use std::ops::IndexMut;
 use std::os::unix::io::IntoRawFd;
 use std::path::Path;
@@ -8,20 +8,20 @@ use std::{iter, process};
 use libc::{STDIN_FILENO, STDOUT_FILENO};
 use nix;
 use nix::errno::Errno;
-use nix::sys::stat::Mode;
-use nix::unistd::{self, ForkResult, execvp, getpid, setpgid, isatty, Pid};
 use nix::fcntl::{self, OFlag};
+use nix::sys::stat::Mode;
+use nix::unistd::{self, execvp, getpid, isatty, setpgid, ForkResult, Pid};
 use tempfile::tempfile;
 
 use builtin::{Builtin, BuiltinMap};
 use env::UserEnv;
-use job;
 use file::Fd;
 use input::ast::*;
 use interpolate;
+use job;
+use options::{self, SOpt};
 use signals;
 use util;
-use options::{self, SOpt};
 
 // The main reason for essentially recreating Redir here is because
 // we need to add the "Replace" condition.
@@ -45,19 +45,27 @@ pub struct Process {
 }
 
 impl Process {
-    pub fn new(prog: Option<String>, args: Vec<String>, env: Vec<CmdPrefix>, io: Vec<CmdPrefix>) -> Process {
-        let new_io: Vec<(i32, IOOp)> = io.into_iter().map(|prefix| {
-            if let CmdPrefix::IORedirect { fd, target } = prefix {
-                let op = match target {
-                    Redir::File(name, flags) => IOOp::File(name, flags),
-                    Redir::Copy(fd) => IOOp::Duplicate(fd),
-                    Redir::Temp(contents) => IOOp::FromString(contents),
-                };
-                (fd, op)
-            } else {
-                unreachable!()
-            }
-        }).collect();
+    pub fn new(
+        prog: Option<String>,
+        args: Vec<String>,
+        env: Vec<CmdPrefix>,
+        io: Vec<CmdPrefix>,
+    ) -> Process {
+        let new_io: Vec<(i32, IOOp)> = io
+            .into_iter()
+            .map(|prefix| {
+                if let CmdPrefix::IORedirect { fd, target } = prefix {
+                    let op = match target {
+                        Redir::File(name, flags) => IOOp::File(name, flags),
+                        Redir::Copy(fd) => IOOp::Duplicate(fd),
+                        Redir::Temp(contents) => IOOp::FromString(contents),
+                    };
+                    (fd, op)
+                } else {
+                    unreachable!()
+                }
+            })
+            .collect();
 
         Process {
             pid: Pid::from_raw(0),
@@ -84,7 +92,11 @@ impl fmt::Display for Process {
     }
 }
 
-pub fn run_processes(builtins: &mut BuiltinMap, command: CommandList, user_env: &mut UserEnv) -> Result<i32, String> {
+pub fn run_processes(
+    builtins: &mut BuiltinMap,
+    command: CommandList,
+    user_env: &mut UserEnv,
+) -> Result<i32, String> {
     let pipeline = match command {
         CommandList::AndList(prev, p) => {
             let status = run_processes(builtins, *prev, user_env)?;
@@ -92,14 +104,14 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: CommandList, user_env: 
                 return Ok(status);
             }
             p
-        },
+        }
         CommandList::OrList(prev, p) => {
             let status = run_processes(builtins, *prev, user_env)?;
             if status == 0 {
                 return Ok(status);
             }
             p
-        },
+        }
         CommandList::SimpleList(p) => p,
     };
 
@@ -119,7 +131,10 @@ pub fn run_processes(builtins: &mut BuiltinMap, command: CommandList, user_env: 
         // Interpolate parameters at the last possible moment
         interpolate::expand(&mut p, user_env)?;
 
-        let builtin_entry = p.prog.as_ref().and_then(|prog| builtins.get_mut(prog.as_str()));
+        let builtin_entry = p
+            .prog
+            .as_ref()
+            .and_then(|prog| builtins.get_mut(prog.as_str()));
         if let Some(cmd) = builtin_entry {
             builtin_result = exec_builtin(p, cmd, pgid, has_pipeline);
         } else {
@@ -176,20 +191,22 @@ fn add_redirects_to_io(io: &Vec<(i32, IOOp)>) -> Result<(), String> {
                 let path = Path::new(&name);
                 let file = fcntl::open(path, *flags, mode).or_else(util::show_err)?;
                 Fd::new(file)
-            },
+            }
             &IOOp::Duplicate(fd) => {
                 if fd == *io_number {
                     continue;
                 }
                 Fd::dup(fd)?
-            },
+            }
             &IOOp::FromString(ref contents) => {
-                let mut tmpfile = tempfile()
-                                       .or(Err("Could not create temporary file".to_string()))?;
-                tmpfile.write_all(contents.as_bytes()).or_else(util::show_err)?;
+                let mut tmpfile =
+                    tempfile().or(Err("Could not create temporary file".to_string()))?;
+                tmpfile
+                    .write_all(contents.as_bytes())
+                    .or_else(util::show_err)?;
                 tmpfile.seek(SeekFrom::Start(0)).or_else(util::show_err)?;
                 Fd::new(tmpfile.into_raw_fd())
-            },
+            }
             &IOOp::Replace(fd) => {
                 if fd == *io_number {
                     continue;
@@ -199,8 +216,7 @@ fn add_redirects_to_io(io: &Vec<(i32, IOOp)>) -> Result<(), String> {
         };
 
         let raw_fd = fd.raw_fd;
-        unistd::dup2(raw_fd, *io_number)
-             .map_err(|_| format!("{}: bad file descriptor", raw_fd))?;
+        unistd::dup2(raw_fd, *io_number).map_err(|_| format!("{}: bad file descriptor", raw_fd))?;
         fd.close();
     }
     Ok(())
@@ -209,19 +225,27 @@ fn add_redirects_to_io(io: &Vec<(i32, IOOp)>) -> Result<(), String> {
 fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
     let cmds: Vec<Op> = pipeline.seq;
 
-    let mut procs: Vec<Process> = cmds.into_iter()
-        .map(|cmd| {
-            match cmd {
-                Op::Cmd { prog, args, io, env } => Process::new(prog, args, env, io),
-                _ => unreachable!(),
-            }
+    let mut procs: Vec<Process> = cmds
+        .into_iter()
+        .map(|cmd| match cmd {
+            Op::Cmd {
+                prog,
+                args,
+                io,
+                env,
+            } => Process::new(prog, args, env, io),
+            _ => unreachable!(),
         })
         .collect();
 
     let num_procs = procs.len();
     let mut prev_pipe_out = IOOp::Duplicate(STDIN_FILENO);
 
-    let has_input = |io: &Vec<(i32, IOOp)>| io.iter().find(|io_item| io_item.0 == STDIN_FILENO).is_some();
+    let has_input = |io: &Vec<(i32, IOOp)>| {
+        io.iter()
+            .find(|io_item| io_item.0 == STDIN_FILENO)
+            .is_some()
+    };
 
     for i in 0..(num_procs - 1) {
         let ref mut p = procs.index_mut(i);
@@ -230,7 +254,8 @@ fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
         if has_input(&p.io) {
             print_err!(
                 "splash: Ignoring piped input for {}; programs may not behave as expected.",
-                p.prog.as_ref().unwrap_or(&String::from("assignment")));
+                p.prog.as_ref().unwrap_or(&String::from("assignment"))
+            );
         }
         // insert at the front so these file descriptors will be overwritten by anything later
         p.io.insert(0, (STDOUT_FILENO, IOOp::Replace(pipe_in)));
@@ -247,7 +272,11 @@ fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
         if num_procs > 1 && has_input(&last_proc.io) {
             print_err!(
                 "splash: Ignoring piped input for {}; programs may not behave as expected.",
-                last_proc.prog.as_ref().unwrap_or(&String::from("assignment")));
+                last_proc
+                    .prog
+                    .as_ref()
+                    .unwrap_or(&String::from("assignment"))
+            );
         }
         let stdout_dup = IOOp::Duplicate(STDOUT_FILENO);
         last_proc.io.insert(0, (STDOUT_FILENO, stdout_dup));
@@ -256,9 +285,10 @@ fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
     Ok(procs)
 }
 
-
 fn fork_process<F>(process: &mut Process, mut pgid: Pid, cmd: F) -> Result<(), nix::Error>
-where F: FnOnce() -> Result<i32, Error> {
+where
+    F: FnOnce() -> Result<i32, Error>,
+{
     let f = unistd::fork()?;
     if let ForkResult::Parent { child } = f {
         process.pid = child;
@@ -311,19 +341,22 @@ where F: FnOnce() -> Result<i32, Error> {
     Ok(())
 }
 
-fn exec_builtin(process: &mut Process, cmd: &mut Box<Builtin>, pgid: Pid, has_pipeline: bool) -> Result<i32, String> {
-    let has_redirects = process.io.len() != 2 ||
-        !is_match!(process.io[0], (0, IOOp::Duplicate(0))) ||
-        !is_match!(process.io[1], (1, IOOp::Duplicate(1)));
+fn exec_builtin(
+    process: &mut Process,
+    cmd: &mut Box<Builtin>,
+    pgid: Pid,
+    has_pipeline: bool,
+) -> Result<i32, String> {
+    let has_redirects = process.io.len() != 2
+        || !is_match!(process.io[0], (0, IOOp::Duplicate(0)))
+        || !is_match!(process.io[1], (1, IOOp::Duplicate(1)));
 
     if !has_pipeline && !has_redirects {
         process.pid = getpid();
         cmd.run(&process.args[..]).or_else(util::show_err)
     } else {
         let args = process.args.clone();
-        fork_process(process, pgid, || {
-            cmd.run(&args[..])
-        }).or_else(util::show_err)?;
+        fork_process(process, pgid, || cmd.run(&args[..])).or_else(util::show_err)?;
 
         // This result doesn't actually matter since the forked process will be waited for
         Ok(0)
@@ -345,7 +378,7 @@ fn fork_proc(process: &mut Process, pgid: Pid) -> Result<(), nix::Error> {
             nix::Error::Sys(Errno::ENOENT) => print_err!("command not found: {}", prog),
             nix::Error::Sys(Errno::EACCES) => print_err!("permission denied: {}", prog),
             nix::Error::Sys(Errno::ENOTDIR) => print_err!("not a directory: {}", prog),
-            _ => {},
+            _ => {}
         };
         Ok(127)
     })
@@ -354,4 +387,3 @@ fn fork_proc(process: &mut Process, pgid: Pid) -> Result<(), nix::Error> {
 fn is_interactive() -> bool {
     options::get_opt(SOpt::Interactive) && isatty(STDIN_FILENO).unwrap_or(false)
 }
-

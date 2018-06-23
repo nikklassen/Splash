@@ -18,8 +18,7 @@ impl Fd {
 
     /// Duplicates the file descriptor
     pub fn dup(fd: RawFd) -> Result<Fd, String> {
-        let new_fd = try!(unistd::dup(fd)
-            .or(Err(format!("{}: bad file descriptor", fd))));
+        let new_fd = try!(unistd::dup(fd).or(Err(format!("{}: bad file descriptor", fd))));
         Ok(Fd::new(new_fd))
     }
 

@@ -1,9 +1,9 @@
-use std::collections::HashMap;
 use getopts::Options;
+use std::collections::HashMap;
 use std::env;
-use std::io::prelude::*;
 use std::io;
-use std::path::{PathBuf, Component, Path};
+use std::io::prelude::*;
+use std::path::{Component, Path, PathBuf};
 
 use job;
 
@@ -13,7 +13,10 @@ pub trait Builtin {
     fn run(&mut self, args: &[String]) -> io::Result<i32>;
 }
 
-impl<F> Builtin for F where F: FnMut(&[String]) -> io::Result<i32> {
+impl<F> Builtin for F
+where
+    F: FnMut(&[String]) -> io::Result<i32>,
+{
     fn run(&mut self, args: &[String]) -> io::Result<i32> {
         self(args)
     }
@@ -47,7 +50,9 @@ fn normalize_logical_path<P: AsRef<Path>>(path: &P) -> PathBuf {
     let mut normalized_path = PathBuf::new();
     for c in path.components() {
         match c {
-            Component::ParentDir => { normalized_path.pop(); },
+            Component::ParentDir => {
+                normalized_path.pop();
+            }
             Component::CurDir => continue,
             _ => normalized_path.push(c.as_os_str()),
         };
@@ -60,8 +65,7 @@ impl Builtin for Cd {
         if args.len() == 0 {
             if let Ok(home) = env::var("HOME") {
                 if home.len() != 0 {
-                    return self.change_to(&PathBuf::from(&home))
-                        .and(SUCCESS);
+                    return self.change_to(&PathBuf::from(&home)).and(SUCCESS);
                 }
             }
             return SUCCESS;
@@ -95,10 +99,12 @@ fn echo(args: &[String]) -> io::Result<i32> {
 
     let matches = match opts.parse(args) {
         Ok(m) => m,
-        Err(_) => { return Err(
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "Unable to parse arguments.")) },
+        Err(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Unable to parse arguments.",
+            ))
+        }
     };
 
     let remaining_args = matches.free.join(" ");
@@ -145,28 +151,29 @@ pub fn init_builtins() -> BuiltinMap {
     add_builtins!(
         builtins,
         [
-        ("cd", Cd::new()),
-        ("echo", echo),
-        ("pwd", pwd),
-        ("fg", fg),
-        ("bg", bg),
-        ("jobs", jobs),
-        ("true", builtin_true),
-        ("false", |_args: &[String]| Ok(1)),
-        (":", builtin_true)
-        ]);
+            ("cd", Cd::new()),
+            ("echo", echo),
+            ("pwd", pwd),
+            ("fg", fg),
+            ("bg", bg),
+            ("jobs", jobs),
+            ("true", builtin_true),
+            ("false", |_args: &[String]| Ok(1)),
+            (":", builtin_true)
+        ]
+    );
     builtins
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{env, fs};
-    use std::path::PathBuf;
     use super::*;
+    use std::path::PathBuf;
+    use std::{env, fs};
     use test_fixture::*;
 
     struct BuiltinTests {
-        pwd: PathBuf
+        pwd: PathBuf,
     }
 
     impl TestFixture for BuiltinTests {
@@ -185,10 +192,11 @@ mod tests {
         }
 
         fn tests(&self) -> TestList<Self> {
-            vec![test!("cd, no args", cd_with_no_args),
-            test!("cd, absolute arg", cd_with_absolute_arg),
-            test!("cd, relative arg", cd_with_relative_arg),
-            test!("cd, previous dir", cd_previous_directory),
+            vec![
+                test!("cd, no args", cd_with_no_args),
+                test!("cd, absolute arg", cd_with_absolute_arg),
+                test!("cd, relative arg", cd_with_relative_arg),
+                test!("cd, previous dir", cd_previous_directory),
             ]
         }
     }
@@ -196,7 +204,7 @@ mod tests {
     impl BuiltinTests {
         fn new() -> BuiltinTests {
             BuiltinTests {
-                pwd: PathBuf::new()
+                pwd: PathBuf::new(),
             }
         }
 

@@ -22,24 +22,31 @@ pub struct Struct_undo_list {
     pub what: Enum_undo_code,
 }
 impl ::std::clone::Clone for Struct_undo_list {
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 impl ::std::default::Default for Struct_undo_list {
-    fn default() -> Self { unsafe { ::std::mem::zeroed() } }
+    fn default() -> Self {
+        unsafe { ::std::mem::zeroed() }
+    }
 }
 pub type UNDO_LIST = Struct_undo_list;
 #[repr(C)]
 #[derive(Copy)]
 pub struct Struct__funmap {
     pub name: *const ::std::os::raw::c_char,
-    pub function: *mut ::std::option::Option<extern "C" fn()
-                                                 -> ::std::os::raw::c_int>,
+    pub function: *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>,
 }
 impl ::std::clone::Clone for Struct__funmap {
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 impl ::std::default::Default for Struct__funmap {
-    fn default() -> Self { unsafe { ::std::mem::zeroed() } }
+    fn default() -> Self {
+        unsafe { ::std::mem::zeroed() }
+    }
 }
 pub type FUNMAP = Struct__funmap;
 pub type histdata_t = *mut ::std::os::raw::c_void;
@@ -51,10 +58,14 @@ pub struct Struct__hist_entry {
     pub data: histdata_t,
 }
 impl ::std::clone::Clone for Struct__hist_entry {
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 impl ::std::default::Default for Struct__hist_entry {
-    fn default() -> Self { unsafe { ::std::mem::zeroed() } }
+    fn default() -> Self {
+        unsafe { ::std::mem::zeroed() }
+    }
 }
 pub type HIST_ENTRY = Struct__hist_entry;
 #[repr(C)]
@@ -67,10 +78,14 @@ pub struct Struct__hist_state {
     pub flags: ::std::os::raw::c_int,
 }
 impl ::std::clone::Clone for Struct__hist_state {
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 impl ::std::default::Default for Struct__hist_state {
-    fn default() -> Self { unsafe { ::std::mem::zeroed() } }
+    fn default() -> Self {
+        unsafe { ::std::mem::zeroed() }
+    }
 }
 pub type HISTORY_STATE = Struct__hist_state;
 #[link(name = "readline")]
@@ -96,36 +111,26 @@ extern "C" {
     pub static mut rl_explicit_arg: ::std::os::raw::c_int;
     pub static mut rl_numeric_arg: ::std::os::raw::c_int;
     pub static mut rl_last_func:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> ::std::os::raw::c_int>;
+        *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>;
     pub static mut rl_terminal_name: *const ::std::os::raw::c_char;
     pub static mut rl_instream: *mut ::libc::FILE;
     pub static mut rl_outstream: *mut ::libc::FILE;
     pub static mut rl_prefer_env_winsize: ::std::os::raw::c_int;
     pub static mut rl_startup_hook:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> ::std::os::raw::c_int>;
+        *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>;
     pub static mut rl_pre_input_hook:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> ::std::os::raw::c_int>;
+        *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>;
     pub static mut rl_event_hook:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> ::std::os::raw::c_int>;
+        *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>;
     pub static mut rl_signal_event_hook:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> ::std::os::raw::c_int>;
+        *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>;
     pub static mut rl_input_available_hook:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> ::std::os::raw::c_int>;
+        *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>;
     pub static mut rl_getc_function:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> ::std::os::raw::c_int>;
-    pub static mut rl_redisplay_function:
-               *mut ::std::option::Option<extern "C" fn()>;
-    pub static mut rl_prep_term_function:
-               *mut ::std::option::Option<extern "C" fn()>;
-    pub static mut rl_deprep_term_function:
-               *mut ::std::option::Option<extern "C" fn()>;
+        *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>;
+    pub static mut rl_redisplay_function: *mut ::std::option::Option<extern "C" fn()>;
+    pub static mut rl_prep_term_function: *mut ::std::option::Option<extern "C" fn()>;
+    pub static mut rl_deprep_term_function: *mut ::std::option::Option<extern "C" fn()>;
     pub static mut rl_executing_key: ::std::os::raw::c_int;
     pub static mut rl_executing_keyseq: *mut ::std::os::raw::c_char;
     pub static mut rl_key_sequence_length: ::std::os::raw::c_int;
@@ -137,56 +142,38 @@ extern "C" {
     pub static mut rl_catch_sigwinch: ::std::os::raw::c_int;
     pub static mut rl_change_environment: ::std::os::raw::c_int;
     pub static mut rl_completion_entry_function:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> *mut ::std::os::raw::c_char>;
+        *mut ::std::option::Option<extern "C" fn() -> *mut ::std::os::raw::c_char>;
     pub static mut rl_menu_completion_entry_function:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> *mut ::std::os::raw::c_char>;
+        *mut ::std::option::Option<extern "C" fn() -> *mut ::std::os::raw::c_char>;
     pub static mut rl_ignore_some_completions_function:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> ::std::os::raw::c_int>;
+        *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>;
     pub static mut rl_attempted_completion_function:
-               *mut ::std::option::Option<extern "C" fn()
-                                              ->
-                                                  *mut *mut ::std::os::raw::c_char>;
-    pub static mut rl_basic_word_break_characters:
-               *const ::std::os::raw::c_char;
-    pub static mut rl_completer_word_break_characters:
-               *mut ::std::os::raw::c_char;
+        *mut ::std::option::Option<extern "C" fn() -> *mut *mut ::std::os::raw::c_char>;
+    pub static mut rl_basic_word_break_characters: *const ::std::os::raw::c_char;
+    pub static mut rl_completer_word_break_characters: *mut ::std::os::raw::c_char;
     pub static mut rl_completion_word_break_hook:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> *mut ::std::os::raw::c_char>;
-    pub static mut rl_completer_quote_characters:
-               *const ::std::os::raw::c_char;
+        *mut ::std::option::Option<extern "C" fn() -> *mut ::std::os::raw::c_char>;
+    pub static mut rl_completer_quote_characters: *const ::std::os::raw::c_char;
     pub static mut rl_basic_quote_characters: *const ::std::os::raw::c_char;
-    pub static mut rl_filename_quote_characters:
-               *const ::std::os::raw::c_char;
+    pub static mut rl_filename_quote_characters: *const ::std::os::raw::c_char;
     pub static mut rl_special_prefixes: *const ::std::os::raw::c_char;
     pub static mut rl_directory_completion_hook:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> ::std::os::raw::c_int>;
+        *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>;
     pub static mut rl_directory_rewrite_hook:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> ::std::os::raw::c_int>;
+        *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>;
     pub static mut rl_filename_stat_hook:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> ::std::os::raw::c_int>;
+        *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>;
     pub static mut rl_filename_rewrite_hook:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> *mut ::std::os::raw::c_char>;
-    pub static mut rl_completion_display_matches_hook:
-               *mut ::std::option::Option<extern "C" fn()>;
+        *mut ::std::option::Option<extern "C" fn() -> *mut ::std::os::raw::c_char>;
+    pub static mut rl_completion_display_matches_hook: *mut ::std::option::Option<extern "C" fn()>;
     pub static mut rl_filename_completion_desired: ::std::os::raw::c_int;
     pub static mut rl_filename_quoting_desired: ::std::os::raw::c_int;
     pub static mut rl_filename_quoting_function:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> *mut ::std::os::raw::c_char>;
+        *mut ::std::option::Option<extern "C" fn() -> *mut ::std::os::raw::c_char>;
     pub static mut rl_filename_dequoting_function:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> *mut ::std::os::raw::c_char>;
+        *mut ::std::option::Option<extern "C" fn() -> *mut ::std::os::raw::c_char>;
     pub static mut rl_char_is_quoted_p:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> ::std::os::raw::c_int>;
+        *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>;
     pub static mut rl_attempted_completion_over: ::std::os::raw::c_int;
     pub static mut rl_completion_type: ::std::os::raw::c_int;
     pub static mut rl_completion_invoking_key: ::std::os::raw::c_int;
@@ -208,497 +195,647 @@ extern "C" {
     pub static mut history_word_delimiters: *mut ::std::os::raw::c_char;
     pub static mut history_comment_char: ::std::os::raw::c_char;
     pub static mut history_no_expand_chars: *mut ::std::os::raw::c_char;
-    pub static mut history_search_delimiter_chars:
-               *mut ::std::os::raw::c_char;
+    pub static mut history_search_delimiter_chars: *mut ::std::os::raw::c_char;
     pub static mut history_quotes_inhibit_expansion: ::std::os::raw::c_int;
     pub static mut history_write_timestamps: ::std::os::raw::c_int;
     pub static mut max_input_history: ::std::os::raw::c_int;
     pub static mut history_inhibit_expansion_function:
-               *mut ::std::option::Option<extern "C" fn()
-                                              -> ::std::os::raw::c_int>;
+        *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>;
 }
 #[link(name = "readline")]
 extern "C" {
-    pub fn rl_digit_argument(arg1: ::std::os::raw::c_int,
-                             arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_universal_argument(arg1: ::std::os::raw::c_int,
-                                 arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_forward_byte(arg1: ::std::os::raw::c_int,
-                           arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_forward_char(arg1: ::std::os::raw::c_int,
-                           arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_forward(arg1: ::std::os::raw::c_int,
-                      arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_backward_byte(arg1: ::std::os::raw::c_int,
-                            arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_backward_char(arg1: ::std::os::raw::c_int,
-                            arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_backward(arg1: ::std::os::raw::c_int,
-                       arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_beg_of_line(arg1: ::std::os::raw::c_int,
-                          arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_end_of_line(arg1: ::std::os::raw::c_int,
-                          arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_forward_word(arg1: ::std::os::raw::c_int,
-                           arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_backward_word(arg1: ::std::os::raw::c_int,
-                            arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_refresh_line(arg1: ::std::os::raw::c_int,
-                           arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_clear_screen(arg1: ::std::os::raw::c_int,
-                           arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_skip_csi_sequence(arg1: ::std::os::raw::c_int,
-                                arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_arrow_keys(arg1: ::std::os::raw::c_int,
-                         arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_insert(arg1: ::std::os::raw::c_int, arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_quoted_insert(arg1: ::std::os::raw::c_int,
-                            arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_tab_insert(arg1: ::std::os::raw::c_int,
-                         arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_newline(arg1: ::std::os::raw::c_int,
-                      arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_do_lowercase_version(arg1: ::std::os::raw::c_int,
-                                   arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_rubout(arg1: ::std::os::raw::c_int, arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_delete(arg1: ::std::os::raw::c_int, arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_rubout_or_delete(arg1: ::std::os::raw::c_int,
-                               arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_delete_horizontal_space(arg1: ::std::os::raw::c_int,
-                                      arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_delete_or_show_completions(arg1: ::std::os::raw::c_int,
-                                         arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_insert_comment(arg1: ::std::os::raw::c_int,
-                             arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_upcase_word(arg1: ::std::os::raw::c_int,
-                          arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_downcase_word(arg1: ::std::os::raw::c_int,
-                            arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_capitalize_word(arg1: ::std::os::raw::c_int,
-                              arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_transpose_words(arg1: ::std::os::raw::c_int,
-                              arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_transpose_chars(arg1: ::std::os::raw::c_int,
-                              arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_char_search(arg1: ::std::os::raw::c_int,
-                          arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_backward_char_search(arg1: ::std::os::raw::c_int,
-                                   arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_beginning_of_history(arg1: ::std::os::raw::c_int,
-                                   arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_end_of_history(arg1: ::std::os::raw::c_int,
-                             arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_get_next_history(arg1: ::std::os::raw::c_int,
-                               arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_get_previous_history(arg1: ::std::os::raw::c_int,
-                                   arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_set_mark(arg1: ::std::os::raw::c_int,
-                       arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_exchange_point_and_mark(arg1: ::std::os::raw::c_int,
-                                      arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_editing_mode(arg1: ::std::os::raw::c_int,
-                              arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_emacs_editing_mode(arg1: ::std::os::raw::c_int,
-                                 arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_overwrite_mode(arg1: ::std::os::raw::c_int,
-                             arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_re_read_init_file(arg1: ::std::os::raw::c_int,
-                                arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_dump_functions(arg1: ::std::os::raw::c_int,
-                             arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_dump_macros(arg1: ::std::os::raw::c_int,
-                          arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_dump_variables(arg1: ::std::os::raw::c_int,
-                             arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_complete(arg1: ::std::os::raw::c_int,
-                       arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_possible_completions(arg1: ::std::os::raw::c_int,
-                                   arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_insert_completions(arg1: ::std::os::raw::c_int,
-                                 arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_old_menu_complete(arg1: ::std::os::raw::c_int,
-                                arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_menu_complete(arg1: ::std::os::raw::c_int,
-                            arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_backward_menu_complete(arg1: ::std::os::raw::c_int,
-                                     arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_kill_word(arg1: ::std::os::raw::c_int,
-                        arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_backward_kill_word(arg1: ::std::os::raw::c_int,
-                                 arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_kill_line(arg1: ::std::os::raw::c_int,
-                        arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_backward_kill_line(arg1: ::std::os::raw::c_int,
-                                 arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_kill_full_line(arg1: ::std::os::raw::c_int,
-                             arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_unix_word_rubout(arg1: ::std::os::raw::c_int,
-                               arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_unix_filename_rubout(arg1: ::std::os::raw::c_int,
-                                   arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_unix_line_discard(arg1: ::std::os::raw::c_int,
-                                arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_copy_region_to_kill(arg1: ::std::os::raw::c_int,
-                                  arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_kill_region(arg1: ::std::os::raw::c_int,
-                          arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_copy_forward_word(arg1: ::std::os::raw::c_int,
-                                arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_copy_backward_word(arg1: ::std::os::raw::c_int,
-                                 arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_yank(arg1: ::std::os::raw::c_int, arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_yank_pop(arg1: ::std::os::raw::c_int,
-                       arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_yank_nth_arg(arg1: ::std::os::raw::c_int,
-                           arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_yank_last_arg(arg1: ::std::os::raw::c_int,
-                            arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_reverse_search_history(arg1: ::std::os::raw::c_int,
-                                     arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_forward_search_history(arg1: ::std::os::raw::c_int,
-                                     arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_start_kbd_macro(arg1: ::std::os::raw::c_int,
-                              arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_end_kbd_macro(arg1: ::std::os::raw::c_int,
-                            arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_call_last_kbd_macro(arg1: ::std::os::raw::c_int,
-                                  arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_print_last_kbd_macro(arg1: ::std::os::raw::c_int,
-                                   arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_revert_line(arg1: ::std::os::raw::c_int,
-                          arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_undo_command(arg1: ::std::os::raw::c_int,
-                           arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_tilde_expand(arg1: ::std::os::raw::c_int,
-                           arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_restart_output(arg1: ::std::os::raw::c_int,
-                             arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_stop_output(arg1: ::std::os::raw::c_int,
-                          arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_abort(arg1: ::std::os::raw::c_int, arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_tty_status(arg1: ::std::os::raw::c_int,
-                         arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_history_search_forward(arg1: ::std::os::raw::c_int,
-                                     arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_history_search_backward(arg1: ::std::os::raw::c_int,
-                                      arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_history_substr_search_forward(arg1: ::std::os::raw::c_int,
-                                            arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_history_substr_search_backward(arg1: ::std::os::raw::c_int,
-                                             arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_noninc_forward_search(arg1: ::std::os::raw::c_int,
-                                    arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_noninc_reverse_search(arg1: ::std::os::raw::c_int,
-                                    arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_noninc_forward_search_again(arg1: ::std::os::raw::c_int,
-                                          arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_noninc_reverse_search_again(arg1: ::std::os::raw::c_int,
-                                          arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_insert_close(arg1: ::std::os::raw::c_int,
-                           arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_callback_handler_install(arg1: *const ::std::os::raw::c_char,
-                                       arg2:
-                                           extern "C" fn(*const ::std::os::raw::c_char));
+    pub fn rl_digit_argument(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_universal_argument(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_forward_byte(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_forward_char(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_forward(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_backward_byte(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_backward_char(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_backward(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_beg_of_line(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_end_of_line(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_forward_word(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_backward_word(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_refresh_line(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_clear_screen(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_skip_csi_sequence(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_arrow_keys(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_insert(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_quoted_insert(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_tab_insert(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_newline(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_do_lowercase_version(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_rubout(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_delete(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_rubout_or_delete(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_delete_horizontal_space(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_delete_or_show_completions(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_insert_comment(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_upcase_word(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_downcase_word(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_capitalize_word(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_transpose_words(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_transpose_chars(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_char_search(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_backward_char_search(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_beginning_of_history(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_end_of_history(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_get_next_history(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_get_previous_history(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_set_mark(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_exchange_point_and_mark(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_editing_mode(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_emacs_editing_mode(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_overwrite_mode(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_re_read_init_file(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_dump_functions(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_dump_macros(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_dump_variables(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_complete(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_possible_completions(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_insert_completions(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_old_menu_complete(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_menu_complete(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_backward_menu_complete(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_kill_word(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_backward_kill_word(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_kill_line(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_backward_kill_line(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_kill_full_line(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_unix_word_rubout(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_unix_filename_rubout(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_unix_line_discard(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_copy_region_to_kill(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_kill_region(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_copy_forward_word(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_copy_backward_word(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_yank(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_yank_pop(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_yank_nth_arg(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_yank_last_arg(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_reverse_search_history(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_forward_search_history(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_start_kbd_macro(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_end_kbd_macro(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_call_last_kbd_macro(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_print_last_kbd_macro(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_revert_line(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_undo_command(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_tilde_expand(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_restart_output(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_stop_output(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_abort(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_tty_status(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_history_search_forward(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_history_search_backward(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_history_substr_search_forward(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_history_substr_search_backward(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_noninc_forward_search(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_noninc_reverse_search(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_noninc_forward_search_again(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_noninc_reverse_search_again(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_insert_close(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_callback_handler_install(
+        arg1: *const ::std::os::raw::c_char,
+        arg2: extern "C" fn(*const ::std::os::raw::c_char),
+    );
     pub fn rl_callback_read_char();
     pub fn rl_callback_handler_remove();
-    pub fn rl_vi_redo(arg1: ::std::os::raw::c_int,
-                      arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_vi_undo(arg1: ::std::os::raw::c_int,
-                      arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_vi_yank_arg(arg1: ::std::os::raw::c_int,
-                          arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_fetch_history(arg1: ::std::os::raw::c_int,
-                               arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_search_again(arg1: ::std::os::raw::c_int,
-                              arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_search(arg1: ::std::os::raw::c_int,
-                        arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_vi_complete(arg1: ::std::os::raw::c_int,
-                          arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_tilde_expand(arg1: ::std::os::raw::c_int,
-                              arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_prev_word(arg1: ::std::os::raw::c_int,
-                           arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_next_word(arg1: ::std::os::raw::c_int,
-                           arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_end_word(arg1: ::std::os::raw::c_int,
-                          arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_insert_beg(arg1: ::std::os::raw::c_int,
-                            arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_append_mode(arg1: ::std::os::raw::c_int,
-                             arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_append_eol(arg1: ::std::os::raw::c_int,
-                            arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_eof_maybe(arg1: ::std::os::raw::c_int,
-                           arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_insertion_mode(arg1: ::std::os::raw::c_int,
-                                arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_insert_mode(arg1: ::std::os::raw::c_int,
-                             arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_movement_mode(arg1: ::std::os::raw::c_int,
-                               arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_arg_digit(arg1: ::std::os::raw::c_int,
-                           arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_change_case(arg1: ::std::os::raw::c_int,
-                             arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_put(arg1: ::std::os::raw::c_int, arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_column(arg1: ::std::os::raw::c_int,
-                        arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_vi_delete_to(arg1: ::std::os::raw::c_int,
-                           arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_change_to(arg1: ::std::os::raw::c_int,
-                           arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_yank_to(arg1: ::std::os::raw::c_int,
-                         arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_rubout(arg1: ::std::os::raw::c_int,
-                        arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_vi_delete(arg1: ::std::os::raw::c_int,
-                        arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_vi_back_to_indent(arg1: ::std::os::raw::c_int,
-                                arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_first_print(arg1: ::std::os::raw::c_int,
-                             arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_char_search(arg1: ::std::os::raw::c_int,
-                             arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_match(arg1: ::std::os::raw::c_int,
-                       arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_vi_change_char(arg1: ::std::os::raw::c_int,
-                             arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_subst(arg1: ::std::os::raw::c_int,
-                       arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_vi_overstrike(arg1: ::std::os::raw::c_int,
-                            arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_overstrike_delete(arg1: ::std::os::raw::c_int,
-                                   arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_replace(arg1: ::std::os::raw::c_int,
-                         arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_set_mark(arg1: ::std::os::raw::c_int,
-                          arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_goto_mark(arg1: ::std::os::raw::c_int,
-                           arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
+    pub fn rl_vi_redo(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_undo(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_yank_arg(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_fetch_history(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_search_again(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_search(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_complete(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_tilde_expand(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_prev_word(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_next_word(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_end_word(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_insert_beg(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_append_mode(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_append_eol(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_eof_maybe(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_insertion_mode(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_insert_mode(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_movement_mode(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_arg_digit(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_change_case(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_put(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_column(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_delete_to(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_change_to(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_yank_to(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_rubout(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_delete(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_back_to_indent(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_first_print(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_char_search(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_match(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_change_char(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_subst(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_overstrike(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_overstrike_delete(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_replace(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_set_mark(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_goto_mark(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
     pub fn rl_vi_check() -> ::std::os::raw::c_int;
-    pub fn rl_vi_domove(arg1: ::std::os::raw::c_int,
-                        arg2: *mut ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_bracktype(arg1: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_vi_start_inserting(arg1: ::std::os::raw::c_int,
-                                 arg2: ::std::os::raw::c_int,
-                                 arg3: ::std::os::raw::c_int);
-    pub fn rl_vi_fWord(arg1: ::std::os::raw::c_int,
-                       arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_vi_bWord(arg1: ::std::os::raw::c_int,
-                       arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_vi_eWord(arg1: ::std::os::raw::c_int,
-                       arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_vi_fword(arg1: ::std::os::raw::c_int,
-                       arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_vi_bword(arg1: ::std::os::raw::c_int,
-                       arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_vi_eword(arg1: ::std::os::raw::c_int,
-                       arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn readline(arg1: *const ::std::os::raw::c_char)
-     -> *mut ::std::os::raw::c_char;
-    pub fn rl_set_prompt(arg1: *const ::std::os::raw::c_char)
-     -> ::std::os::raw::c_int;
-    pub fn rl_expand_prompt(arg1: *mut ::std::os::raw::c_char)
-     -> ::std::os::raw::c_int;
+    pub fn rl_vi_domove(
+        arg1: ::std::os::raw::c_int,
+        arg2: *mut ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_bracktype(arg1: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+    pub fn rl_vi_start_inserting(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+        arg3: ::std::os::raw::c_int,
+    );
+    pub fn rl_vi_fWord(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_bWord(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_eWord(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_fword(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_bword(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_vi_eword(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn readline(arg1: *const ::std::os::raw::c_char) -> *mut ::std::os::raw::c_char;
+    pub fn rl_set_prompt(arg1: *const ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+    pub fn rl_expand_prompt(arg1: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
     pub fn rl_initialize() -> ::std::os::raw::c_int;
     pub fn rl_discard_argument() -> ::std::os::raw::c_int;
-    pub fn rl_add_defun(arg1: *const ::std::os::raw::c_char,
-                        arg2:
-                            *mut ::std::option::Option<extern "C" fn()
-                                                           ->
-                                                               ::std::os::raw::c_int>,
-                        arg3: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_bind_key(arg1: ::std::os::raw::c_int,
-                       arg2:
-                           *mut ::std::option::Option<extern "C" fn()
-                                                          ->
-                                                              ::std::os::raw::c_int>)
-     -> ::std::os::raw::c_int;
-    pub fn rl_unbind_key(arg1: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_bind_key_if_unbound(arg1: ::std::os::raw::c_int,
-                                  arg2:
-                                      *mut ::std::option::Option<extern "C" fn()
-                                                                     ->
-                                                                         ::std::os::raw::c_int>)
-     -> ::std::os::raw::c_int;
-    pub fn rl_bind_keyseq(arg1: *const ::std::os::raw::c_char,
-                          arg2:
-                              *mut ::std::option::Option<extern "C" fn()
-                                                             ->
-                                                                 ::std::os::raw::c_int>)
-     -> ::std::os::raw::c_int;
-    pub fn rl_bind_keyseq_if_unbound(arg1: *const ::std::os::raw::c_char,
-                                     arg2:
-                                         *mut ::std::option::Option<extern "C" fn()
-                                                                        ->
-                                                                            ::std::os::raw::c_int>)
-     -> ::std::os::raw::c_int;
-    pub fn rl_variable_value(arg1: *const ::std::os::raw::c_char)
-     -> *mut ::std::os::raw::c_char;
-    pub fn rl_variable_bind(arg1: *const ::std::os::raw::c_char,
-                            arg2: *const ::std::os::raw::c_char)
-     -> ::std::os::raw::c_int;
-    pub fn rl_translate_keyseq(arg1: *const ::std::os::raw::c_char,
-                               arg2: *mut ::std::os::raw::c_char,
-                               arg3: *mut ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_untranslate_keyseq(arg1: ::std::os::raw::c_int)
-     -> *mut ::std::os::raw::c_char;
-    pub fn rl_named_function(arg1: *const ::std::os::raw::c_char)
-     ->
-         *mut ::std::option::Option<unsafe extern "C" fn(arg1:
-                                                             *const ::std::os::raw::c_char)
-                                        -> ::std::os::raw::c_int>;
+    pub fn rl_add_defun(
+        arg1: *const ::std::os::raw::c_char,
+        arg2: *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>,
+        arg3: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_bind_key(
+        arg1: ::std::os::raw::c_int,
+        arg2: *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_unbind_key(arg1: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+    pub fn rl_bind_key_if_unbound(
+        arg1: ::std::os::raw::c_int,
+        arg2: *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_bind_keyseq(
+        arg1: *const ::std::os::raw::c_char,
+        arg2: *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_bind_keyseq_if_unbound(
+        arg1: *const ::std::os::raw::c_char,
+        arg2: *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_variable_value(arg1: *const ::std::os::raw::c_char) -> *mut ::std::os::raw::c_char;
+    pub fn rl_variable_bind(
+        arg1: *const ::std::os::raw::c_char,
+        arg2: *const ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_translate_keyseq(
+        arg1: *const ::std::os::raw::c_char,
+        arg2: *mut ::std::os::raw::c_char,
+        arg3: *mut ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_untranslate_keyseq(arg1: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+    pub fn rl_named_function(
+        arg1: *const ::std::os::raw::c_char,
+    ) -> *mut ::std::option::Option<
+        unsafe extern "C" fn(arg1: *const ::std::os::raw::c_char) -> ::std::os::raw::c_int,
+    >;
     pub fn rl_list_funmap_names();
-    pub fn rl_invoking_keyseqs(arg1:
-                                   *mut ::std::option::Option<extern "C" fn()
-                                                                  ->
-                                                                      ::std::os::raw::c_int>)
-     -> *mut *mut ::std::os::raw::c_char;
+    pub fn rl_invoking_keyseqs(
+        arg1: *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>,
+    ) -> *mut *mut ::std::os::raw::c_char;
     pub fn rl_function_dumper(arg1: ::std::os::raw::c_int);
     pub fn rl_macro_dumper(arg1: ::std::os::raw::c_int);
     pub fn rl_variable_dumper(arg1: ::std::os::raw::c_int);
-    pub fn rl_read_init_file(arg1: *const ::std::os::raw::c_char)
-     -> ::std::os::raw::c_int;
-    pub fn rl_parse_and_bind(arg1: *mut ::std::os::raw::c_char)
-     -> ::std::os::raw::c_int;
+    pub fn rl_read_init_file(arg1: *const ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+    pub fn rl_parse_and_bind(arg1: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
     pub fn rl_set_keymap_from_edit_mode();
     pub fn rl_get_keymap_name_from_edit_mode() -> *mut ::std::os::raw::c_char;
-    pub fn rl_add_funmap_entry(arg1: *const ::std::os::raw::c_char,
-                               arg2:
-                                   *mut ::std::option::Option<extern "C" fn()
-                                                                  ->
-                                                                      ::std::os::raw::c_int>)
-     -> ::std::os::raw::c_int;
+    pub fn rl_add_funmap_entry(
+        arg1: *const ::std::os::raw::c_char,
+        arg2: *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>,
+    ) -> ::std::os::raw::c_int;
     pub fn rl_funmap_names() -> *mut *const ::std::os::raw::c_char;
     pub fn rl_initialize_funmap();
     pub fn rl_push_macro_input(arg1: *mut ::std::os::raw::c_char);
-    pub fn rl_add_undo(arg1: Enum_undo_code, arg2: ::std::os::raw::c_int,
-                       arg3: ::std::os::raw::c_int,
-                       arg4: *mut ::std::os::raw::c_char);
+    pub fn rl_add_undo(
+        arg1: Enum_undo_code,
+        arg2: ::std::os::raw::c_int,
+        arg3: ::std::os::raw::c_int,
+        arg4: *mut ::std::os::raw::c_char,
+    );
     pub fn rl_free_undo_list();
     pub fn rl_do_undo() -> ::std::os::raw::c_int;
     pub fn rl_begin_undo_group() -> ::std::os::raw::c_int;
     pub fn rl_end_undo_group() -> ::std::os::raw::c_int;
-    pub fn rl_modifying(arg1: ::std::os::raw::c_int,
-                        arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+    pub fn rl_modifying(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
     pub fn rl_redisplay();
     pub fn rl_on_new_line() -> ::std::os::raw::c_int;
     pub fn rl_on_new_line_with_prompt() -> ::std::os::raw::c_int;
@@ -708,48 +845,43 @@ extern "C" {
     pub fn rl_crlf() -> ::std::os::raw::c_int;
     pub fn rl_message() -> ::std::os::raw::c_int;
     pub fn rl_show_char(arg1: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_character_len(arg1: ::std::os::raw::c_int,
-                            arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
+    pub fn rl_character_len(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
     pub fn rl_save_prompt();
     pub fn rl_restore_prompt();
-    pub fn rl_replace_line(arg1: *const ::std::os::raw::c_char,
-                           arg2: ::std::os::raw::c_int);
-    pub fn rl_insert_text(arg1: *const ::std::os::raw::c_char)
-     -> ::std::os::raw::c_int;
-    pub fn rl_delete_text(arg1: ::std::os::raw::c_int,
-                          arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_kill_text(arg1: ::std::os::raw::c_int,
-                        arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
-    pub fn rl_copy_text(arg1: ::std::os::raw::c_int,
-                        arg2: ::std::os::raw::c_int)
-     -> *mut ::std::os::raw::c_char;
+    pub fn rl_replace_line(arg1: *const ::std::os::raw::c_char, arg2: ::std::os::raw::c_int);
+    pub fn rl_insert_text(arg1: *const ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+    pub fn rl_delete_text(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_kill_text(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn rl_copy_text(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> *mut ::std::os::raw::c_char;
     pub fn rl_prep_terminal(arg1: ::std::os::raw::c_int);
     pub fn rl_deprep_terminal();
-    pub fn rl_reset_terminal(arg1: *const ::std::os::raw::c_char)
-     -> ::std::os::raw::c_int;
+    pub fn rl_reset_terminal(arg1: *const ::std::os::raw::c_char) -> ::std::os::raw::c_int;
     pub fn rl_resize_terminal();
-    pub fn rl_set_screen_size(arg1: ::std::os::raw::c_int,
-                              arg2: ::std::os::raw::c_int);
-    pub fn rl_get_screen_size(arg1: *mut ::std::os::raw::c_int,
-                              arg2: *mut ::std::os::raw::c_int);
+    pub fn rl_set_screen_size(arg1: ::std::os::raw::c_int, arg2: ::std::os::raw::c_int);
+    pub fn rl_get_screen_size(arg1: *mut ::std::os::raw::c_int, arg2: *mut ::std::os::raw::c_int);
     pub fn rl_reset_screen_size();
-    pub fn rl_get_termcap(arg1: *const ::std::os::raw::c_char)
-     -> *mut ::std::os::raw::c_char;
-    pub fn rl_stuff_char(arg1: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_execute_next(arg1: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
+    pub fn rl_get_termcap(arg1: *const ::std::os::raw::c_char) -> *mut ::std::os::raw::c_char;
+    pub fn rl_stuff_char(arg1: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+    pub fn rl_execute_next(arg1: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
     pub fn rl_clear_pending_input() -> ::std::os::raw::c_int;
     pub fn rl_read_key() -> ::std::os::raw::c_int;
     pub fn rl_getc(arg1: *mut ::libc::FILE) -> ::std::os::raw::c_int;
-    pub fn rl_set_keyboard_input_timeout(arg1: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
+    pub fn rl_set_keyboard_input_timeout(arg1: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
     pub fn rl_extend_line_buffer(arg1: ::std::os::raw::c_int);
     pub fn rl_ding() -> ::std::os::raw::c_int;
-    pub fn rl_alphabetic(arg1: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
+    pub fn rl_alphabetic(arg1: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
     pub fn rl_free(arg1: *mut ::std::os::raw::c_void);
     pub fn rl_set_signals() -> ::std::os::raw::c_int;
     pub fn rl_clear_signals() -> ::std::os::raw::c_int;
@@ -757,36 +889,32 @@ extern "C" {
     pub fn rl_reset_after_signal();
     pub fn rl_free_line_state();
     pub fn rl_echo_signal_char(arg1: ::std::os::raw::c_int);
-    pub fn rl_set_paren_blink_timeout(arg1: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
+    pub fn rl_set_paren_blink_timeout(arg1: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
     pub fn rl_clear_history();
     pub fn rl_maybe_save_line() -> ::std::os::raw::c_int;
     pub fn rl_maybe_unsave_line() -> ::std::os::raw::c_int;
     pub fn rl_maybe_replace_line() -> ::std::os::raw::c_int;
-    pub fn rl_complete_internal(arg1: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn rl_display_match_list(arg1: *mut *mut ::std::os::raw::c_char,
-                                 arg2: ::std::os::raw::c_int,
-                                 arg3: ::std::os::raw::c_int);
-    pub fn rl_completion_matches(arg1: *const ::std::os::raw::c_char,
-                                 arg2:
-                                     *mut ::std::option::Option<extern "C" fn()
-                                                                    ->
-                                                                        *mut ::std::os::raw::c_char>)
-     -> *mut *mut ::std::os::raw::c_char;
-    pub fn rl_username_completion_function(arg1:
-                                               *const ::std::os::raw::c_char,
-                                           arg2: ::std::os::raw::c_int)
-     -> *mut ::std::os::raw::c_char;
-    pub fn rl_filename_completion_function(arg1:
-                                               *const ::std::os::raw::c_char,
-                                           arg2: ::std::os::raw::c_int)
-     -> *mut ::std::os::raw::c_char;
-    pub fn rl_completion_mode(arg1:
-                                  *mut ::std::option::Option<extern "C" fn()
-                                                                 ->
-                                                                     ::std::os::raw::c_int>)
-     -> ::std::os::raw::c_int;
+    pub fn rl_complete_internal(arg1: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+    pub fn rl_display_match_list(
+        arg1: *mut *mut ::std::os::raw::c_char,
+        arg2: ::std::os::raw::c_int,
+        arg3: ::std::os::raw::c_int,
+    );
+    pub fn rl_completion_matches(
+        arg1: *const ::std::os::raw::c_char,
+        arg2: *mut ::std::option::Option<extern "C" fn() -> *mut ::std::os::raw::c_char>,
+    ) -> *mut *mut ::std::os::raw::c_char;
+    pub fn rl_username_completion_function(
+        arg1: *const ::std::os::raw::c_char,
+        arg2: ::std::os::raw::c_int,
+    ) -> *mut ::std::os::raw::c_char;
+    pub fn rl_filename_completion_function(
+        arg1: *const ::std::os::raw::c_char,
+        arg2: ::std::os::raw::c_int,
+    ) -> *mut ::std::os::raw::c_char;
+    pub fn rl_completion_mode(
+        arg1: *mut ::std::option::Option<extern "C" fn() -> ::std::os::raw::c_int>,
+    ) -> ::std::os::raw::c_int;
     pub fn using_history();
     pub fn history_get_history_state() -> *mut HISTORY_STATE;
     pub fn history_set_history_state(arg1: *mut HISTORY_STATE);
@@ -794,9 +922,11 @@ extern "C" {
     pub fn add_history_time(arg1: *const ::std::os::raw::c_char);
     pub fn remove_history(arg1: ::std::os::raw::c_int) -> *mut HIST_ENTRY;
     pub fn free_history_entry(arg1: *mut HIST_ENTRY) -> histdata_t;
-    pub fn replace_history_entry(arg1: ::std::os::raw::c_int,
-                                 arg2: *const ::std::os::raw::c_char,
-                                 arg3: histdata_t) -> *mut HIST_ENTRY;
+    pub fn replace_history_entry(
+        arg1: ::std::os::raw::c_int,
+        arg2: *const ::std::os::raw::c_char,
+        arg3: histdata_t,
+    ) -> *mut HIST_ENTRY;
     pub fn clear_history();
     pub fn stifle_history(arg1: ::std::os::raw::c_int);
     pub fn unstifle_history() -> ::std::os::raw::c_int;
@@ -807,45 +937,52 @@ extern "C" {
     pub fn history_get(arg1: ::std::os::raw::c_int) -> *mut HIST_ENTRY;
     pub fn history_get_time(arg1: *mut HIST_ENTRY) -> ::libc::time_t;
     pub fn history_total_bytes() -> ::std::os::raw::c_int;
-    pub fn history_set_pos(arg1: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
+    pub fn history_set_pos(arg1: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
     pub fn previous_history() -> *mut HIST_ENTRY;
     pub fn next_history() -> *mut HIST_ENTRY;
-    pub fn history_search(arg1: *const ::std::os::raw::c_char,
-                          arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn history_search_prefix(arg1: *const ::std::os::raw::c_char,
-                                 arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn history_search_pos(arg1: *const ::std::os::raw::c_char,
-                              arg2: ::std::os::raw::c_int,
-                              arg3: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn read_history(arg1: *const ::std::os::raw::c_char)
-     -> ::std::os::raw::c_int;
-    pub fn read_history_range(arg1: *const ::std::os::raw::c_char,
-                              arg2: ::std::os::raw::c_int,
-                              arg3: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn write_history(arg1: *const ::std::os::raw::c_char)
-     -> ::std::os::raw::c_int;
-    pub fn append_history(arg1: ::std::os::raw::c_int,
-                          arg2: *const ::std::os::raw::c_char)
-     -> ::std::os::raw::c_int;
-    pub fn history_truncate_file(arg1: *const ::std::os::raw::c_char,
-                                 arg2: ::std::os::raw::c_int)
-     -> ::std::os::raw::c_int;
-    pub fn history_expand(arg1: *mut ::std::os::raw::c_char,
-                          arg2: *mut *mut ::std::os::raw::c_char)
-     -> ::std::os::raw::c_int;
-    pub fn history_arg_extract(arg1: ::std::os::raw::c_int,
-                               arg2: ::std::os::raw::c_int,
-                               arg3: *const ::std::os::raw::c_char)
-     -> *mut ::std::os::raw::c_char;
-    pub fn get_history_event(arg1: *const ::std::os::raw::c_char,
-                             arg2: *mut ::std::os::raw::c_int,
-                             arg3: ::std::os::raw::c_int)
-     -> *mut ::std::os::raw::c_char;
-    pub fn history_tokenize(arg1: *const ::std::os::raw::c_char)
-     -> *mut *mut ::std::os::raw::c_char;
+    pub fn history_search(
+        arg1: *const ::std::os::raw::c_char,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn history_search_prefix(
+        arg1: *const ::std::os::raw::c_char,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn history_search_pos(
+        arg1: *const ::std::os::raw::c_char,
+        arg2: ::std::os::raw::c_int,
+        arg3: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn read_history(arg1: *const ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+    pub fn read_history_range(
+        arg1: *const ::std::os::raw::c_char,
+        arg2: ::std::os::raw::c_int,
+        arg3: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn write_history(arg1: *const ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+    pub fn append_history(
+        arg1: ::std::os::raw::c_int,
+        arg2: *const ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+    pub fn history_truncate_file(
+        arg1: *const ::std::os::raw::c_char,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+    pub fn history_expand(
+        arg1: *mut ::std::os::raw::c_char,
+        arg2: *mut *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+    pub fn history_arg_extract(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+        arg3: *const ::std::os::raw::c_char,
+    ) -> *mut ::std::os::raw::c_char;
+    pub fn get_history_event(
+        arg1: *const ::std::os::raw::c_char,
+        arg2: *mut ::std::os::raw::c_int,
+        arg3: ::std::os::raw::c_int,
+    ) -> *mut ::std::os::raw::c_char;
+    pub fn history_tokenize(
+        arg1: *const ::std::os::raw::c_char,
+    ) -> *mut *mut ::std::os::raw::c_char;
 }

@@ -1,9 +1,9 @@
 use std::env;
-use std::ffi::{CString, CStr};
+use std::ffi::{CStr, CString};
 use std::io;
 use std::os::raw::c_char;
+use std::sync::atomic::{AtomicBool, Ordering, ATOMIC_BOOL_INIT};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
 
 use libc::{self, STDIN_FILENO};
 use nix::sys::signal;
@@ -42,7 +42,9 @@ pub fn getline(cont: bool) -> Option<String> {
 }
 
 pub fn readline<T>(prompt: T) -> Option<String>
-where T: Into<String> {
+where
+    T: Into<String>,
+{
     let res = isatty(STDIN_FILENO);
     // If stdin is closed
     if res.is_err() {
@@ -100,7 +102,9 @@ pub extern "C" fn readline_line_callback(line_raw: *const c_char) {
 }
 
 fn readline_raw<T>(prompt: T) -> Option<String>
-where T: Into<String> {
+where
+    T: Into<String>,
+{
     use nix::sys::select;
 
     unsafe {
@@ -160,24 +164,26 @@ fn get_prompt_string() -> String {
         .map(|v| {
             let home = env::var("HOME").unwrap_or(String::new());
             v.replace(&home, "~") + " "
-        }).unwrap_or(String::new());
+        })
+        .unwrap_or(String::new());
     format!("{}{}  ", pwd, WAVE_EMOJI)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::{get_prompt_string, WAVE_EMOJI};
     use std::env;
     use std::path::PathBuf;
-    use super::{get_prompt_string, WAVE_EMOJI};
     use test_fixture::*;
 
     struct PromptTests;
 
     impl TestFixture for PromptTests {
         fn tests(&self) -> TestList<Self> {
-            vec![test!("prompt, unset pwd", prompt_unset_pwd),
-            test!("prompt, includes pwd", prompt_includes_pwd),
-            test!("prompt, includes home", prompt_includes_home),
+            vec![
+                test!("prompt, unset pwd", prompt_unset_pwd),
+                test!("prompt, includes pwd", prompt_includes_pwd),
+                test!("prompt, includes home", prompt_includes_home),
             ]
         }
     }
@@ -204,8 +210,7 @@ mod tests {
             let dir = "my_dir";
             env::set_var("PWD", join(home, dir));
             let prompt = get_prompt_string();
-            assert!(prompt.starts_with(
-                    &join("~", dir)));
+            assert!(prompt.starts_with(&join("~", dir)));
         }
     }
 

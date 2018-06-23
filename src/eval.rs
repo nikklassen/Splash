@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader};
 use builtin::BuiltinMap;
 use env::UserEnv;
 use input::token::*;
-use input::{prompt, parser, tokenizer};
+use input::{parser, prompt, tokenizer};
 use process;
 
 #[derive(Debug)]
@@ -26,7 +26,7 @@ fn getline(input_method: &mut InputReader, cont: bool) -> Option<String> {
                 // read_line doesn't remove trailing '\n', we also don't want any trailing '\r's
                 Some(s.trim_right().to_string())
             }
-        },
+        }
         &mut InputReader::Command(ref mut lines) => {
             if lines.is_empty() {
                 None
@@ -64,17 +64,17 @@ pub fn eval(mut input_reader: InputReader, mut builtins: BuiltinMap) {
         while i < tokens.len() {
             match tokens[i] {
                 Token::DLESS | Token::DLESSDASH => {
-                    if let Token::Word(ref s) = tokens[i+1] {
+                    if let Token::Word(ref s) = tokens[i + 1] {
                         here_docs.push((tokens[i].clone(), s.clone()));
                     } else {
                         print_err!("here docs must be strings");
                         continue;
                     }
                     i += 2;
-                },
+                }
                 _ => {
                     i += 1;
-                },
+                }
             }
         }
         for (kind, here_doc) in here_docs {
@@ -82,7 +82,10 @@ pub fn eval(mut input_reader: InputReader, mut builtins: BuiltinMap) {
             loop {
                 if let Some(mut s) = getline(&mut input_reader, true) {
                     if kind == Token::DLESSDASH {
-                        s = s.chars().skip_while(|c| c.is_whitespace()).collect::<String>();
+                        s = s
+                            .chars()
+                            .skip_while(|c| c.is_whitespace())
+                            .collect::<String>();
                     }
                     if s == here_doc {
                         input.push(content);
@@ -116,10 +119,10 @@ pub fn eval(mut input_reader: InputReader, mut builtins: BuiltinMap) {
             match res {
                 Err(e) => {
                     print_err!("{}", e);
-                },
+                }
                 Ok(n) => {
                     last_status = n;
-                },
+                }
             };
         }
     }

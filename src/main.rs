@@ -18,12 +18,12 @@ pub mod builtin;
 pub mod env;
 mod eval;
 pub mod file;
+pub mod input;
+mod interpolate;
 pub mod job;
+pub mod options;
 pub mod process;
 pub mod signals;
-pub mod input;
-pub mod options;
-mod interpolate;
 
 #[allow(dead_code, non_camel_case_types)]
 mod bindings;
@@ -33,10 +33,10 @@ use std::io::BufReader;
 
 use getopts::Options;
 
-use eval::InputReader;
 use builtin::BuiltinMap;
-use signals::initialize_signals;
+use eval::InputReader;
 use options::SOpt;
+use signals::initialize_signals;
 
 fn main() {
     use std::env;
@@ -52,7 +52,7 @@ fn main() {
         Err(f) => {
             print_err!("{}", f);
             ::std::process::exit(1);
-        },
+        }
     };
 
     if matches.opt_present("V") {
@@ -82,8 +82,8 @@ fn main() {
 
 fn initialize_term(mut interactive: bool) -> BuiltinMap {
     use libc::STDIN_FILENO;
-    use nix::unistd;
     use nix::sys::signal;
+    use nix::unistd;
 
     // See if we are running interactively
     let shell_terminal = STDIN_FILENO;
@@ -102,8 +102,12 @@ fn initialize_term(mut interactive: bool) -> BuiltinMap {
             shell_pgid = unistd::getpgrp();
             let term_grp;
             match unistd::tcgetpgrp(shell_terminal) {
-                Ok(id) => { term_grp = id; },
-                Err(_) => { continue; }
+                Ok(id) => {
+                    term_grp = id;
+                }
+                Err(_) => {
+                    continue;
+                }
             }
 
             if term_grp != shell_pgid {
@@ -127,8 +131,10 @@ fn initialize_term(mut interactive: bool) -> BuiltinMap {
 }
 
 fn print_version() {
-    print!("Splash 0.0.1
+    print!(
+        "Splash 0.0.1
 Copyright (c) 2016 Nik Klassen and Dan Reynolds
 License GPLv3+: GNU GPL version 3 or later
-<http://www.gnu.org/licenses/gpl.html>.");
+<http://www.gnu.org/licenses/gpl.html>."
+    );
 }

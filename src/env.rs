@@ -8,7 +8,7 @@ pub struct UserEnv {
 impl UserEnv {
     pub fn new() -> Self {
         UserEnv {
-            vars: HashMap::new()
+            vars: HashMap::new(),
         }
     }
 
@@ -16,10 +16,6 @@ impl UserEnv {
         self.vars
             .get(var)
             .map(|value| value.clone())
-            .unwrap_or_else(|| {
-                env::var(var)
-                    .unwrap_or(String::new())
-            })
+            .unwrap_or_else(|| env::var(var).unwrap_or(String::new()))
     }
 }
-

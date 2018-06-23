@@ -1,6 +1,6 @@
+use lazy_static;
 use std::collections::HashMap;
 use util::SharedTable;
-use lazy_static;
 
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub enum SOpt {
@@ -27,4 +27,3 @@ pub fn get_opt(opt: SOpt) -> bool {
 pub fn set_opt(opt: SOpt, value: bool) {
     let _ = OPTIONS.get_inner().insert(opt, value);
 }
-

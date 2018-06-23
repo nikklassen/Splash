@@ -8,12 +8,12 @@ lazy_static! {
 
 #[macro_export]
 macro_rules! test {
-    ($name: expr, $func: ident) => {
+    ($name:expr, $func:ident) => {
         (String::from($name), Box::new(Self::$func))
-    }
+    };
 }
 
-pub type TestList<T> = Vec<(String, Box<Fn(&mut T)+Send>)>;
+pub type TestList<T> = Vec<(String, Box<Fn(&mut T) + Send>)>;
 
 pub trait TestFixture {
     fn setup(&mut self) -> () {}
@@ -38,7 +38,6 @@ fn test_fixture_inner<T: TestFixture + Send + 'static>(fixture: Arc<Mutex<T>>) {
 
     let tests = fixture.lock().unwrap().tests();
     for (t_name, t) in tests.into_iter() {
-
         let fixture = fixture.clone();
 
         let handle = thread::Builder::new()

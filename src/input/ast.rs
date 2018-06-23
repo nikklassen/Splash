@@ -1,5 +1,5 @@
+use libc::{STDIN_FILENO, STDOUT_FILENO};
 use nix::fcntl::OFlag;
-use libc::{STDOUT_FILENO, STDIN_FILENO};
 
 use super::token::Token;
 
@@ -12,14 +12,8 @@ pub enum Redir {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CmdPrefix {
-    IORedirect {
-        fd: i32,
-        target: Redir,
-    },
-    Assignment {
-        lhs: String,
-        rhs: String,
-    }
+    IORedirect { fd: i32, target: Redir },
+    Assignment { lhs: String, rhs: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,23 +46,34 @@ pub enum CommandList {
 
 pub type CompleteCommand = Vec<CommandList>;
 
-pub fn build_io_redirect(((io_number_opt, redir_op), io_file): ((Option<Token>, Token), String)) -> CmdPrefix {
+pub fn build_io_redirect(
+    ((io_number_opt, redir_op), io_file): ((Option<Token>, Token), String),
+) -> CmdPrefix {
     fn parse_fd(fd: String) -> i32 {
         // TODO fail gracefully
         fd.parse::<i32>().unwrap()
     }
     let io_number = io_number_opt
-        .map(|t| if let Token::IONumber(n) = t {
-            n
+        .map(|t| {
+            if let Token::IONumber(n) = t {
+                n
+            } else {
+                unreachable!()
+            }
+        })
+        .unwrap_or(if redir_op.is_out() {
+            STDOUT_FILENO
         } else {
-            unreachable!()
-        }).unwrap_or(if redir_op.is_out() { STDOUT_FILENO } else { STDIN_FILENO });
+            STDIN_FILENO
+        });
     let target = match redir_op {
         Token::LESS => Redir::File(io_file, OFlag::O_RDONLY),
         Token::LESSAND => Redir::Copy(parse_fd(io_file)),
         Token::LESSGREAT => Redir::File(io_file, OFlag::O_RDWR | OFlag::O_CREAT),
 
-        Token::GREAT | Token::CLOBBER => Redir::File(io_file, OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC),
+        Token::GREAT | Token::CLOBBER => {
+            Redir::File(io_file, OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC)
+        }
         Token::DGREAT => Redir::File(io_file, OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_APPEND),
         Token::GREATAND => Redir::Copy(parse_fd(io_file)),
         Token::DLESS | Token::DLESSDASH => Redir::Temp(String::new()),
