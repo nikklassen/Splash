@@ -87,6 +87,20 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
                             chars.next();
                             c = next;
                         }
+                        '0' | 'a' | 'b' | 't' | 'n' | 'v' | 'f' | 'r' => {
+                            chars.next();
+                            c = match next {
+                                '0' => '\0',
+                                'a' => '\x07',
+                                'b' => '\x08',
+                                't' => '\t',
+                                'n' => '\n',
+                                'v' => '\x0B',
+                                'f' => '\x0C',
+                                'r' => '\r',
+                                _ => unreachable!(),
+                            };
+                        }
                         // Rule 4a
                         _ => {
                             chars.next();
@@ -423,5 +437,13 @@ mod tests {
         let (t, unterminated) = tokenize(input, false);
         assert!(unterminated);
         assert_eq!(t, vec![word("cmd")]);
+    }
+
+    #[test]
+    fn tokenize_special_character() {
+        let input = r#"a\nb"#;
+        let (t, _) = tokenize(input, false);
+
+        assert_eq!(t, vec![word("a\nb")]);
     }
 }
