@@ -92,30 +92,13 @@ impl fmt::Display for Process {
     }
 }
 
-pub fn run_processes(
+pub fn run_pipeline(
     builtins: &mut BuiltinMap,
-    command: CommandList,
     user_env: &mut UserEnv,
+    pipeline: Pipeline,
+    async: bool,
 ) -> Result<i32, String> {
-    let pipeline = match command {
-        CommandList::AndList(prev, p) => {
-            let status = run_processes(builtins, *prev, user_env)?;
-            if status != 0 {
-                return Ok(status);
-            }
-            p
-        }
-        CommandList::OrList(prev, p) => {
-            let status = run_processes(builtins, *prev, user_env)?;
-            if status == 0 {
-                return Ok(status);
-            }
-            p
-        }
-        CommandList::SimpleList(p) => p,
-    };
-
-    let mut procs = pipeline_to_processes(pipeline).or_else(util::show_err)?;
+    let mut procs = pipeline_to_processes(pipeline, async).or_else(util::show_err)?;
     let mut pgid = Pid::from_raw(0);
     let mut builtin_result: Result<i32, String> = Ok(0);
 
@@ -222,18 +205,18 @@ fn add_redirects_to_io(io: &Vec<(i32, IOOp)>) -> Result<(), String> {
     Ok(())
 }
 
-fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
-    let cmds: Vec<Op> = pipeline.seq;
+pub fn pipeline_to_processes(pipeline: Pipeline, async: bool) -> Result<Vec<Process>, String> {
+    let cmds: Vec<Command> = pipeline.cmds;
 
     let mut procs: Vec<Process> = cmds
         .into_iter()
         .map(|cmd| match cmd {
-            Op::Cmd {
+            Command::SimpleCommand(SimpleCommand::Cmd {
                 prog,
                 args,
                 io,
                 env,
-            } => Process::new(prog, args, env, io),
+            }) => Process::new(prog, args, env, io),
             _ => unreachable!(),
         })
         .collect();
@@ -267,7 +250,7 @@ fn pipeline_to_processes(pipeline: Pipeline) -> Result<Vec<Process>, String> {
     // End the borrow of procs before we return it
     {
         let last_proc = procs.last_mut().unwrap();
-        last_proc.async = pipeline.async;
+        last_proc.async = async;
 
         if num_procs > 1 && has_input(&last_proc.io) {
             print_err!(

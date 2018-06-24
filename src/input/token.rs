@@ -23,6 +23,13 @@ pub enum Token {
     OR,
     DSEMI,
 
+    // Keywords
+    If,
+    Then,
+    Else,
+    Elif,
+    Fi,
+
     // Non-operator special symbols
     Semi,
     Async,

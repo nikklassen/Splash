@@ -17,7 +17,7 @@ pub enum CmdPrefix {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Op {
+pub enum SimpleCommand {
     Cmd {
         prog: Option<String>,
         args: Vec<String>,
@@ -31,20 +31,54 @@ pub enum Op {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Pipeline {
-    pub bang: bool,
-    pub seq: Vec<Op>,
-    pub async: bool,
+pub struct IfBranch {
+    pub condition: Vec<Statement>,
+    pub block: Vec<Statement>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CommandList {
-    AndList(Box<CommandList>, Pipeline),
-    OrList(Box<CommandList>, Pipeline),
-    SimpleList(Pipeline),
+pub enum CompoundCommand {
+    If {
+        branches: Vec<IfBranch>,
+        else_block: Option<Box<Vec<Statement>>>,
+    },
+    // TODO
+    // BraceGroup,
+    // Subshell,
+    // For
+    // Case
+    // While
+    // Until
 }
 
-pub type CompleteCommand = Vec<CommandList>;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Command {
+    SimpleCommand(SimpleCommand),
+    CompoundCommand(CompoundCommand, Vec<CmdPrefix>),
+    // TODO
+    // FunctionDef(),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pipeline {
+    pub bang: bool,
+    pub cmds: Vec<Command>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AndOrList {
+    And(Box<AndOrList>, Pipeline),
+    Or(Box<AndOrList>, Pipeline),
+    Pipeline(Pipeline),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Statement {
+    Async(AndOrList),
+    Seq(AndOrList),
+}
+
+pub type Script = Vec<Statement>;
 
 pub fn build_io_redirect(
     ((io_number_opt, redir_op), io_file): ((Option<Token>, Token), String),

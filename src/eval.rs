@@ -3,6 +3,7 @@ use std::io::{BufRead, BufReader};
 
 use builtin::BuiltinMap;
 use env::UserEnv;
+use input::ast::*;
 use input::token::*;
 use input::{parser, prompt, tokenizer};
 use process;
@@ -115,7 +116,7 @@ pub fn eval(mut input_reader: InputReader, mut builtins: BuiltinMap) {
         }
 
         for command in commands {
-            let res = process::run_processes(&mut builtins, command, &mut user_env);
+            let res = run_statement(&mut builtins, &mut user_env, command);
             match res {
                 Err(e) => {
                     print_err!("{}", e);
@@ -128,4 +129,41 @@ pub fn eval(mut input_reader: InputReader, mut builtins: BuiltinMap) {
     }
 
     ::std::process::exit(last_status);
+}
+
+fn run_statement(
+    builtins: &mut BuiltinMap,
+    user_env: &mut UserEnv,
+    statement: Statement,
+) -> Result<i32, String> {
+    match statement {
+        Statement::Async(and_or) => run_and_or(builtins, user_env, and_or, true),
+        Statement::Seq(and_or) => run_and_or(builtins, user_env, and_or, false),
+    }
+}
+
+fn run_and_or(
+    builtins: &mut BuiltinMap,
+    user_env: &mut UserEnv,
+    list: AndOrList,
+    async: bool,
+) -> Result<i32, String> {
+    let pipeline = match list {
+        AndOrList::And(prev, p) => {
+            let status = run_and_or(builtins, user_env, *prev, false)?;
+            if status != 0 {
+                return Ok(status);
+            }
+            p
+        }
+        AndOrList::Or(prev, p) => {
+            let status = run_and_or(builtins, user_env, *prev, false)?;
+            if status == 0 {
+                return Ok(status);
+            }
+            p
+        }
+        AndOrList::Pipeline(p) => p,
+    };
+    process::run_pipeline(builtins, user_env, pipeline, async)
 }

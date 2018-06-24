@@ -57,7 +57,7 @@ I: Stream<Item = Token>,
 }
 
 parser! {
-    fn command[I]()(I) -> Op
+    fn simple_command[I]()(I) -> SimpleCommand
     where [
         I: Stream<Item = Token>,
     ] {
@@ -76,7 +76,7 @@ parser! {
                 args = cmd_args;
             }
             let (env, io) = cmd_prefix.into_iter().partition(|r| is_match!(r, &CmdPrefix::Assignment { .. }));
-            Op::Cmd {
+            SimpleCommand::Cmd {
                 prog: prog,
                 args: args,
                 env: env,
@@ -87,13 +87,69 @@ parser! {
 }
 
 parser! {
+    fn if_statement[I]()(I) -> CompoundCommand
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        let if_branch = || compound_list().skip(token(Token::Then)).and(compound_list()).map(|(condition, block)| IfBranch { condition, block });
+
+        token(Token::If)
+            .with(if_branch())
+            .and(
+                many(token(Token::Elif).with(if_branch()))
+            )
+            .and(
+                optional(token(Token::Else).with(compound_list()))
+            )
+            .skip(token(Token::Fi))
+            .map(|((if_part, mut elif_parts), else_block): ((IfBranch, Vec<IfBranch>), Option<Vec<Statement>>)| {
+                let mut branches = vec![if_part];
+                branches.append(&mut elif_parts);
+                CompoundCommand::If {
+                    branches,
+                    else_block: else_block.map(Box::new),
+                }
+            })
+    }
+}
+
+/*
+compound_command : brace_group
+                 | subshell
+                 | for_clause
+                 | case_clause
+                 | if_clause
+                 | while_clause
+                 | until_clause
+                 ;
+*/
+parser! {
+    fn compound_command[I]()(I) -> CompoundCommand
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        if_statement()
+    }
+}
+
+parser! {
+    fn command[I]()(I) -> Command
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        simple_command().map(|cmd| Command::SimpleCommand(cmd))
+            .or(compound_command().and(many(io_redirect())).map(|(cmd, redirs)| Command::CompoundCommand(cmd, redirs)))
+    }
+}
+
+parser! {
     fn pipeline[I]()(I) -> Pipeline
     where [
         I: Stream<Item = Token>,
     ] {
         let cmd_chain = command().map(|op| vec![op]);
         let pipe = token(Token::Pipe).map(|_t| {
-            return |mut lhs: Vec<Op>, mut rhs: Vec<Op>| {
+            return |mut lhs: Vec<Command>, mut rhs: Vec<Command>| {
                 // Remove the first argument so we can distinguish it as the command name
                 lhs.push(rhs.remove(0));
                 lhs
@@ -102,32 +158,37 @@ parser! {
 
         chainl1(cmd_chain, pipe)
             .map(|cmds| Pipeline {
-                seq: cmds,
-                async: false,
+                cmds,
                 bang: false,
             })
     }
 }
 
+/*
+and_or :                         pipeline
+       | and_or AND_IF linebreak pipeline
+       | and_or OR_IF  linebreak pipeline
+       ;
+*/
 parser! {
-    fn and_or[I]()(I) -> CommandList
+    fn and_or[I]()(I) -> AndOrList
     where [
         I: Stream<Item = Token>,
     ] {
-        chainl1(
-            pipeline().map(CommandList::SimpleList),
+        chainr1(
+            pipeline().map(AndOrList::Pipeline),
             choice([token(Token::AND), token(Token::OR)])
                 .skip(linebreak())
                 .map(|t: Token| {
                     move |l, r| {
-                        if let CommandList::SimpleList(pipe) = r {
-                            if t == Token::AND {
-                                CommandList::AndList(Box::new(l), pipe)
-                            } else {
-                                CommandList::OrList(Box::new(l), pipe)
-                            }
+                        let pipe = match r {
+                            AndOrList::Pipeline(pipe) => pipe,
+                            _ => unreachable!(),
+                        };
+                        if t == Token::AND {
+                            AndOrList::And(Box::new(l), pipe)
                         } else {
-                            unreachable!()
+                            AndOrList::Or(Box::new(l), pipe)
                         }
                     }
                 }),
@@ -136,111 +197,197 @@ parser! {
 }
 
 parser! {
-    fn newline_list[I]()(I) -> Vec<Token>
+    fn newline_list[I]()(I) -> ()
     where [
         I: Stream<Item = Token>,
     ] {
-        many1(token(Token::LineBreak))
+        skip_many1(token(Token::LineBreak))
     }
 }
 
 parser! {
-    fn linebreak[I]()(I) -> Option<Vec<Token>>
+    fn linebreak[I]()(I) -> ()
     where [
         I: Stream<Item = Token>,
     ] {
-        optional(newline_list())
+        skip_many(token(Token::LineBreak))
     }
 }
 
-parser! {
-    fn complete_command[I]()(I) -> CompleteCommand
-    where [
-I: Stream<Item = Token>,
-] {
-    let separator_op = || choice![token(Token::Semi), token(Token::Async)];
-    let separator = (separator_op().skip(linebreak())).or(newline_list().map(|_| Token::LineBreak));
+fn and_or_to_statement(and_or: AndOrList) -> Vec<Statement> {
+    vec![Statement::Seq(and_or)]
+}
 
-    fn process_sep(sep: Token, cmd: &mut CompleteCommand) -> () {
+fn join_and_or_statements(
+    ((mut and_or, sep_opt), mut tail_opt): (
+        (Vec<Statement>, Option<Token>),
+        Option<Vec<Statement>>,
+    ),
+) -> Vec<Statement> {
+    if let Some(sep) = sep_opt {
         if sep == Token::Async {
-            let p: &mut Pipeline = match cmd.last_mut().unwrap() {
-                &mut CommandList::SimpleList(ref mut p) => p,
-                &mut CommandList::AndList(_, ref mut p) => p,
-                &mut CommandList::OrList(_, ref mut p) => p,
+            let inner = match and_or.pop().unwrap() {
+                Statement::Seq(inner) => inner,
+                _ => unreachable!(),
             };
-            p.async = true;
+            and_or.push(Statement::Async(inner));
         }
     }
+    if let Some(ref mut tail) = tail_opt {
+        and_or.append(tail);
+    }
+    and_or
+}
 
-    let list = and_or()
-        .map(|p| vec![p])
-        .and(many(try(
-            separator_op().and(and_or().map(|p| vec![p]))
-        )))
-        .map(
-            |(cmd, cmds): (CompleteCommand, Vec<(Token, CompleteCommand)>)| {
-                let mut c = cmd;
-                let mut new_cmds = Vec::new();
-                for (sep, cmd2) in cmds.into_iter() {
-                    process_sep(sep, &mut c);
-                    new_cmds.append(&mut c);
-                    c = cmd2;
+parser! {
+    fn compound_list[I]()(I) -> Vec<Statement>
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        and_or().map(and_or_to_statement)
+            .and(optional(separator()))
+            .then(|(and_or, sep_opt)| {
+                if sep_opt.is_some() {
+                    value((and_or, sep_opt)).and(optional(compound_list())).left()
+                } else {
+                    value(((and_or, sep_opt), None)).right()
                 }
-                new_cmds.append(&mut c);
-                new_cmds
-            },
-        );
-
-    list.and(optional(separator))
-        .map(|(mut l, sep)| {
-            if let Some(s) = sep {
-                process_sep(s, &mut l);
-            }
-            l
-        })
-        .skip(eof())
-}
+            })
+            .map(join_and_or_statements)
+    }
 }
 
-pub fn parse(tokens: Vec<Token>, heredocs: &mut Vec<String>) -> Result<CompleteCommand, String> {
-    let result = complete_command()
-        .easy_parse(easy::Stream(&tokens[..]))
+parser! {
+    fn separator_op[I]()(I) -> Token
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        token(Token::Semi).or(token(Token::Async))
+    }
+}
+
+fn separator<I>() -> impl Parser<Input = I, Output = Token>
+where
+    I: Stream<Item = Token>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
+{
+    (separator_op().skip(linebreak())).or(newline_list().map(|_| Token::LineBreak))
+}
+
+/*
+complete_command : list separator_op
+                 | list
+                 ;
+list             : list separator_op and_or
+                 |                   and_or
+                 ;
+*/
+parser! {
+    fn complete_command[I]()(I) -> Vec<Statement>
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        and_or().map(and_or_to_statement)
+            .and(optional(separator_op()))
+            .then(|(and_or, sep_opt)| {
+                if sep_opt.is_some() {
+                    value((and_or, sep_opt)).and(optional(complete_command())).left()
+                } else {
+                    value(((and_or, sep_opt), None)).right()
+                }
+            })
+            .map(join_and_or_statements)
+    }
+}
+
+/*
+complete_commands: complete_commands newline_list complete_command
+                 |                                complete_command
+*/
+parser! {
+    fn complete_commands[I]()(I) -> Vec<Statement>
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        chainl1(
+            complete_command(),
+            newline_list().map(|_| |mut l: Vec<Statement>, mut r: Vec<Statement>| {
+                l.append(&mut r);
+                l
+            })
+        )
+    }
+}
+
+/*
+program         : linebreak complete_commands linebreak
+                | linebreak
+                ;
+*/
+parser! {
+    fn program[I]()(I) -> Option<Vec<Statement>>
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        linebreak().with(optional(complete_commands().skip(linebreak())))
+    }
+}
+
+pub fn parse(tokens: Vec<Token>, heredocs: &mut Vec<String>) -> Result<Vec<Statement>, String> {
+    let input = easy::Stream(&tokens[..]);
+    // let input = PartialStream(&tokens[..]);
+    let result = program()
+        .easy_parse(input)
+        // .parse(input)
+        // .map_err(|err| err.map_position(|p| p.translate_position(&input)))
         .map(|r| r.0)
         .or_else(util::show_err)?;
 
-    fn populate_heredocs(cmds: &mut CommandList, heredocs: &mut Vec<String>) {
-        match cmds {
-            &mut CommandList::SimpleList(ref mut pipeline) => {
-                for cmd in pipeline.seq.iter_mut() {
-                    match cmd {
-                        &mut Op::Cmd { ref mut io, .. } => {
-                            for ios in io.iter_mut() {
-                                if let &mut CmdPrefix::IORedirect {
-                                    target: Redir::Temp(ref mut contents),
-                                    ..
-                                } = ios
-                                {
-                                    if let Some(hd) = heredocs.pop() {
-                                        *contents = hd;
-                                    } else {
-                                        unreachable!("Not enough heredocs were specified");
-                                    }
-                                }
+    let script = if let Some(script) = result {
+        script
+    } else {
+        return Ok(vec![]);
+    };
+
+    fn populate_heredocs(pipeline: &mut Pipeline, heredocs: &mut Vec<String>) {
+        for cmd in pipeline.cmds.iter_mut() {
+            match cmd {
+                &mut Command::SimpleCommand(SimpleCommand::Cmd { ref mut io, .. }) => {
+                    for ios in io.iter_mut() {
+                        if let &mut CmdPrefix::IORedirect {
+                            target: Redir::Temp(ref mut contents),
+                            ..
+                        } = ios
+                        {
+                            if let Some(hd) = heredocs.pop() {
+                                *contents = hd;
+                            } else {
+                                unreachable!("Not enough heredocs were specified");
                             }
                         }
-                        _ => {}
                     }
                 }
+                _ => {}
             }
-            _ => {}
         }
     }
 
-    let populated = result
+    let populated = script
         .into_iter()
-        .map(|mut r| {
-            populate_heredocs(&mut r, heredocs);
-            r
+        .map(|mut cmd_list_elem| {
+            {
+                let and_or = match cmd_list_elem {
+                    Statement::Async(ref mut and_or) => and_or,
+                    Statement::Seq(ref mut and_or) => and_or,
+                };
+                let mut pipeline = match and_or {
+                    &mut AndOrList::And(_, ref mut pipeline) => pipeline,
+                    &mut AndOrList::Or(_, ref mut pipeline) => pipeline,
+                    &mut AndOrList::Pipeline(ref mut pipeline) => pipeline,
+                };
+                populate_heredocs(&mut pipeline, heredocs);
+            }
+            cmd_list_elem
         })
         .collect::<Vec<_>>();
     Ok(populated)
@@ -253,12 +400,11 @@ mod tests {
     use libc::{STDIN_FILENO, STDOUT_FILENO};
     use nix::fcntl::OFlag;
 
-    fn to_command_list(cmd: Op) -> CompleteCommand {
-        vec![CommandList::SimpleList(Pipeline {
-            seq: vec![cmd],
-            async: false,
+    fn to_script(cmd: SimpleCommand) -> Script {
+        vec![Statement::Seq(AndOrList::Pipeline(Pipeline {
+            cmds: vec![Command::SimpleCommand(cmd)],
             bang: false,
-        })]
+        }))]
     }
 
     fn to_word(s: &str) -> String {
@@ -271,7 +417,7 @@ mod tests {
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(
             cmd,
-            to_command_list(Op::Cmd {
+            to_script(SimpleCommand::Cmd {
                 prog: Some(to_word("cmd")),
                 args: Vec::new(),
                 io: Vec::new(),
@@ -286,7 +432,7 @@ mod tests {
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(
             cmd,
-            to_command_list(Op::Cmd {
+            to_script(SimpleCommand::Cmd {
                 prog: Some(to_word("cmd")),
                 args: vec![to_word("argA"), to_word("argB")],
                 io: Vec::new(),
@@ -301,7 +447,7 @@ mod tests {
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(
             cmd,
-            to_command_list(Op::Cmd {
+            to_script(SimpleCommand::Cmd {
                 prog: Some(to_word("cmd")),
                 args: vec![r#""argA $VAR argB""#.to_string()],
                 io: Vec::new(),
@@ -316,7 +462,7 @@ mod tests {
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(
             cmd,
-            to_command_list(Op::Cmd {
+            to_script(SimpleCommand::Cmd {
                 prog: Some(to_word("cmd")),
                 args: vec![r#"argA"argB argC"$TEST'argD argE'"#.to_string()],
                 io: Vec::new(),
@@ -331,7 +477,7 @@ mod tests {
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(
             cmd,
-            to_command_list(Op::Cmd {
+            to_script(SimpleCommand::Cmd {
                 prog: None,
                 args: Vec::new(),
                 io: Vec::new(),
@@ -349,7 +495,7 @@ mod tests {
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(
             cmd,
-            to_command_list(Op::Cmd {
+            to_script(SimpleCommand::Cmd {
                 prog: Some(to_word("baz")),
                 args: Vec::new(),
                 io: Vec::new(),
@@ -367,24 +513,23 @@ mod tests {
         let cmd = parse(input, &mut vec![]).unwrap();
         assert_eq!(
             cmd,
-            vec![CommandList::SimpleList(Pipeline {
-                seq: vec![
-                    Op::Cmd {
+            vec![Statement::Seq(AndOrList::Pipeline(Pipeline {
+                cmds: vec![
+                    Command::SimpleCommand(SimpleCommand::Cmd {
                         prog: Some(to_word("cmdA")),
                         args: Vec::new(),
                         io: Vec::new(),
                         env: Vec::new(),
-                    },
-                    Op::Cmd {
+                    }),
+                    Command::SimpleCommand(SimpleCommand::Cmd {
                         prog: Some(to_word("cmdB")),
                         args: vec![to_word("arg")],
                         io: Vec::new(),
                         env: Vec::new(),
-                    },
+                    }),
                 ],
-                async: false,
                 bang: false,
-            })]
+            }))]
         );
     }
 
@@ -397,7 +542,7 @@ mod tests {
         let append_flags = write_flags | OFlag::O_APPEND;
         assert_eq!(
             cmd,
-            to_command_list(Op::Cmd {
+            to_script(SimpleCommand::Cmd {
                 prog: Some(to_word("cmd")),
                 args: Vec::new(),
                 io: vec![
@@ -426,7 +571,7 @@ mod tests {
         let read_flags = OFlag::O_RDONLY;
         assert_eq!(
             cmd,
-            to_command_list(Op::Cmd {
+            to_script(SimpleCommand::Cmd {
                 prog: Some(to_word("cmd")),
                 args: Vec::new(),
                 io: vec![
@@ -451,7 +596,7 @@ mod tests {
         let write_flags = OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC;
         assert_eq!(
             cmd,
-            to_command_list(Op::Cmd {
+            to_script(SimpleCommand::Cmd {
                 prog: Some(to_word("cmd")),
                 args: Vec::new(),
                 io: vec![CmdPrefix::IORedirect {
@@ -470,7 +615,7 @@ mod tests {
         let cmd = parse(input, &mut vec![contents.clone()]).unwrap();
         assert_eq!(
             cmd,
-            to_command_list(Op::Cmd {
+            to_script(SimpleCommand::Cmd {
                 prog: Some(to_word("cmd")),
                 args: Vec::new(),
                 io: vec![CmdPrefix::IORedirect {
@@ -489,16 +634,15 @@ mod tests {
 
         assert_eq!(
             cmd,
-            vec![CommandList::SimpleList(Pipeline {
-                seq: vec![Op::Cmd {
+            vec![Statement::Async(AndOrList::Pipeline(Pipeline {
+                cmds: vec![Command::SimpleCommand(SimpleCommand::Cmd {
                     prog: Some(to_word("cmd")),
                     args: Vec::new(),
                     io: Vec::new(),
                     env: Vec::new(),
-                }],
-                async: true,
+                })],
                 bang: false,
-            })]
+            }))]
         );
     }
 
@@ -510,27 +654,64 @@ mod tests {
         assert_eq!(
             cmd,
             vec![
-                CommandList::SimpleList(Pipeline {
-                    seq: vec![Op::Cmd {
+                Statement::Seq(AndOrList::Pipeline(Pipeline {
+                    cmds: vec![Command::SimpleCommand(SimpleCommand::Cmd {
                         prog: Some(to_word("cmdA")),
                         args: Vec::new(),
                         io: Vec::new(),
                         env: Vec::new(),
-                    }],
-                    async: false,
+                    })],
                     bang: false,
-                }),
-                CommandList::SimpleList(Pipeline {
-                    seq: vec![Op::Cmd {
+                })),
+                Statement::Seq(AndOrList::Pipeline(Pipeline {
+                    cmds: vec![Command::SimpleCommand(SimpleCommand::Cmd {
                         prog: Some(to_word("cmdB")),
                         args: Vec::new(),
                         io: Vec::new(),
                         env: Vec::new(),
-                    }],
-                    async: false,
+                    })],
                     bang: false,
-                }),
+                })),
             ]
+        );
+    }
+
+    #[test]
+    fn bare_if() {
+        let input = tokenize("if true; then :; fi", false).0;
+        let cmd = parse(input, &mut vec![]).unwrap();
+
+        assert_eq!(
+            cmd,
+            vec![Statement::Seq(AndOrList::Pipeline(Pipeline {
+                cmds: vec![Command::CompoundCommand(
+                    CompoundCommand::If {
+                        branches: vec![IfBranch {
+                            condition: vec![Statement::Seq(AndOrList::Pipeline(Pipeline {
+                                cmds: vec![Command::SimpleCommand(SimpleCommand::Cmd {
+                                    prog: Some(to_word("true")),
+                                    args: Vec::new(),
+                                    io: Vec::new(),
+                                    env: Vec::new(),
+                                })],
+                                bang: false,
+                            }))],
+                            block: vec![Statement::Seq(AndOrList::Pipeline(Pipeline {
+                                cmds: vec![Command::SimpleCommand(SimpleCommand::Cmd {
+                                    prog: Some(to_word(":")),
+                                    args: Vec::new(),
+                                    io: Vec::new(),
+                                    env: Vec::new(),
+                                })],
+                                bang: false,
+                            }))],
+                        }],
+                        else_block: None,
+                    },
+                    Vec::new(),
+                )],
+                bang: false,
+            }))]
         );
     }
 }

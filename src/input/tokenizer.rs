@@ -15,9 +15,13 @@ fn is_op_prefix(c: char) -> bool {
     }
 }
 
-fn add_token(tokens: &mut Vec<Token>, s: &str) {
+fn add_token(keyword_table: &HashMap<&str, Token>, tokens: &mut Vec<Token>, s: &str) {
     if s.len() > 0 {
-        tokens.push(Token::Word(s.to_owned()));
+        if let Some(keyword) = keyword_table.get(s) {
+            tokens.push(keyword.clone());
+        } else {
+            tokens.push(Token::Word(s.to_owned()));
+        }
     }
 }
 
@@ -41,6 +45,13 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
         "|" => Token::Pipe,
         "&" => Token::Async,
         ";" => Token::Semi,
+    };
+    let keyword_table: HashMap<&str, Token> = hash_map!{
+        "if" => Token::If,
+        "elif" => Token::Elif,
+        "then" => Token::Then,
+        "else" => Token::Else,
+        "fi" => Token::Fi,
     };
 
     let mut chars = input.chars().peekable();
@@ -186,10 +197,10 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
                     if let Ok(n) = token.parse::<i32>() {
                         tokens.push(Token::IONumber(n));
                     } else {
-                        add_token(&mut tokens, &token);
+                        add_token(&keyword_table, &mut tokens, &token);
                     }
                 } else {
-                    add_token(&mut tokens, &token);
+                    add_token(&keyword_table, &mut tokens, &token);
                 }
                 token.clear();
                 state = TokenState::OPERATOR;
@@ -198,7 +209,7 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
             else if c == '\n'
                 && arithmetic_nesting + command_nesting + param_nesting + quote_nesting == 0
             {
-                add_token(&mut tokens, &token);
+                add_token(&keyword_table, &mut tokens, &token);
                 tokens.push(Token::LineBreak);
                 token.clear();
                 skip_char = true;
@@ -207,13 +218,13 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
             else if c.is_whitespace()
                 && arithmetic_nesting + command_nesting + param_nesting + quote_nesting == 0
             {
-                add_token(&mut tokens, &token);
+                add_token(&keyword_table, &mut tokens, &token);
                 token.clear();
                 skip_char = true;
             }
             // Rule 10
             else if c == '#' {
-                add_token(&mut tokens, &token);
+                add_token(&keyword_table, &mut tokens, &token);
                 token.clear();
 
                 while let Some(next) = chars.next() {
@@ -236,7 +247,7 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
         let op = operator_table.get(token.as_str()).unwrap().clone();
         tokens.push(op);
     } else {
-        add_token(&mut tokens, &token);
+        add_token(&keyword_table, &mut tokens, &token);
     }
 
     unterminated |= arithmetic_nesting + command_nesting + param_nesting + quote_nesting > 0;
