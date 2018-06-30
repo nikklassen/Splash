@@ -32,9 +32,6 @@ pub fn getline(cont: bool) -> Option<String> {
             line.push_str(&s);
             break;
         } else {
-            if !cont {
-                println!("exit");
-            }
             return None;
         }
     }

@@ -53,6 +53,9 @@ pub fn eval(mut input_reader: InputReader, mut state: ShellState) {
         if let Some(next_line) = getline(&mut input_reader, cont) {
             line.push_str(&next_line);
         } else {
+            if !cont && options::is_interactive(&state.opts) {
+                println!("exit");
+            }
             break;
         }
 
