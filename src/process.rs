@@ -88,6 +88,9 @@ impl fmt::Display for Process {
         if let Some(ref p) = self.prog {
             write!(f, "{}", p)?;
         }
+        if self.prog.is_some() && !self.args.is_empty() {
+            write!(f, " ")?;
+        }
         if !self.args.is_empty() {
             write!(f, "{}", util::join_str(&self.args, " "))?;
         }
