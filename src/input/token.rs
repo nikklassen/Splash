@@ -45,6 +45,44 @@ impl Token {
     }
 }
 
+impl Display for Token {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        let s;
+        write!(
+            f,
+            "{}",
+            match self {
+                Token::Word(w) => w,
+                Token::IONumber(i) => {
+                    s = format!("fd '{}'", i);
+                    s.as_str()
+                }
+                Token::LineBreak => "\\n",
+                Token::LESS => "<",
+                Token::DLESS => "<<",
+                Token::DLESSDASH => "<<-",
+                Token::LESSAND => "<&",
+                Token::LESSGREAT => "<>",
+                Token::GREAT => ">",
+                Token::DGREAT => ">>",
+                Token::GREATAND => ">&",
+                Token::CLOBBER => ">|",
+                Token::AND => "&&",
+                Token::OR => "||",
+                Token::DSEMI => ";;",
+                Token::If => "if",
+                Token::Then => "then",
+                Token::Else => "else",
+                Token::Elif => "elif",
+                Token::Fi => "fi",
+                Token::Semi => ";",
+                Token::Async => "&",
+                Token::Pipe => "|",
+            }
+        )
+    }
+}
+
 pub fn is_redir(t: Token) -> bool {
     match t {
         Token::GREAT
@@ -57,12 +95,5 @@ pub fn is_redir(t: Token) -> bool {
         | Token::LESSAND
         | Token::LESSGREAT => true,
         _ => false,
-    }
-}
-
-impl Display for Token {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        try!(write!(f, "{:?}", self));
-        Ok(())
     }
 }

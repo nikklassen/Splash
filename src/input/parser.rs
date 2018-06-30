@@ -2,7 +2,6 @@ use super::ast::*;
 use super::token::{self, Token};
 use combine::easy;
 use combine::*;
-use util;
 
 parser! {
     fn word[I]()(I) -> String
@@ -139,6 +138,7 @@ parser! {
     ] {
         simple_command().map(|cmd| Command::SimpleCommand(cmd))
             .or(compound_command().and(many(io_redirect())).map(|(cmd, redirs)| Command::CompoundCommand(cmd, redirs)))
+            .expected("command")
     }
 }
 
@@ -219,9 +219,9 @@ fn and_or_to_statement(and_or: AndOrList) -> Vec<Statement> {
 }
 
 fn join_and_or_statements(
-    ((mut and_or, sep_opt), mut tail_opt): (
-        (Vec<Statement>, Option<Token>),
-        Option<Vec<Statement>>,
+    (mut and_or, (sep_opt, mut tail_opt)): (
+        Vec<Statement>,
+        (Option<Token>, Option<Vec<Statement>>),
     ),
 ) -> Vec<Statement> {
     if let Some(sep) = sep_opt {
@@ -239,20 +239,36 @@ fn join_and_or_statements(
     and_or
 }
 
+/*
+compound_list    : linebreak term
+                 | linebreak term separator
+                 ;
+term             : term separator and_or
+                 |                and_or
+                 ;
+*/
+fn compound_list<'a, I: 'a>(
+) -> Box<Parser<Input = I, Output = Vec<Statement>, PartialState = ()> + 'a>
+where
+    I: Stream<Item = Token>,
+    I::Error: ParseError<I::Item, I::Range, I::Position>,
+{
+    // This may be a bug in combine, for now just doing something that works
+    compound_list_inner().boxed()
+}
+
 parser! {
-    fn compound_list[I]()(I) -> Vec<Statement>
+    fn compound_list_inner[I]()(I) -> Vec<Statement>
     where [
         I: Stream<Item = Token>,
     ] {
-        and_or().map(and_or_to_statement)
-            .and(optional(separator()))
-            .then(|(and_or, sep_opt)| {
-                if sep_opt.is_some() {
-                    value((and_or, sep_opt)).and(optional(compound_list())).left()
-                } else {
-                    value(((and_or, sep_opt), None)).right()
-                }
-            })
+        linebreak()
+            .with(and_or().map(and_or_to_statement))
+            .and(
+                separator()
+                    .and(optional(compound_list()))
+                    .map(|(sep, compound_list_opt)| (Some(sep), compound_list_opt))
+                    .or(value((None, None))))
             .map(join_and_or_statements)
     }
 }
@@ -266,12 +282,13 @@ parser! {
     }
 }
 
-fn separator<I>() -> impl Parser<Input = I, Output = Token>
-where
-    I: Stream<Item = Token>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
-{
-    (separator_op().skip(linebreak())).or(newline_list().map(|_| Token::LineBreak))
+parser! {
+    fn separator[I]()(I) -> Token
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        separator_op().or(token(Token::LineBreak)).skip(linebreak())
+    }
 }
 
 /*
@@ -288,14 +305,11 @@ parser! {
         I: Stream<Item = Token>,
     ] {
         and_or().map(and_or_to_statement)
-            .and(optional(separator_op()))
-            .then(|(and_or, sep_opt)| {
-                if sep_opt.is_some() {
-                    value((and_or, sep_opt)).and(optional(complete_command())).left()
-                } else {
-                    value(((and_or, sep_opt), None)).right()
-                }
-            })
+            .and(
+                separator_op()
+                    .and(optional(complete_command()))
+                    .map(|(sep, compound_list_opt)| (Some(sep), compound_list_opt))
+                    .or(value((None, None))))
             .map(join_and_or_statements)
     }
 }
@@ -309,13 +323,15 @@ parser! {
     where [
         I: Stream<Item = Token>,
     ] {
-        chainl1(
-            complete_command(),
-            newline_list().map(|_| |mut l: Vec<Statement>, mut r: Vec<Statement>| {
+        complete_command()
+            .and(
+                newline_list()
+                    .with(optional(complete_commands()).map(|cc| cc.unwrap_or(Vec::new())))
+                    .or(value(vec![])))
+            .map(|(mut l, mut r)| {
                 l.append(&mut r);
                 l
             })
-        )
     }
 }
 
@@ -329,20 +345,16 @@ parser! {
     where [
         I: Stream<Item = Token>,
     ] {
-        linebreak().with(optional(complete_commands().skip(linebreak())))
+        linebreak().with(optional(complete_commands()))
     }
 }
 
 pub fn parse(tokens: Vec<Token>, heredocs: &mut Vec<String>) -> Result<Vec<Statement>, String> {
     let input = easy::Stream(&tokens[..]);
-    // let input = PartialStream(&tokens[..]);
-    let result = program()
-        .easy_parse(input)
-        // .parse(input)
-        // .map_err(|err| err.map_position(|p| p.translate_position(&input)))
-        .map(|r| r.0)
-        .or_else(util::show_err)?;
+    let parse_result = program().easy_parse(input).map_err(|e| format!("{:?}", e))?;
 
+    // TODO handle partial input
+    let result = parse_result.0;
     let script = if let Some(script) = result {
         script
     } else {
@@ -713,5 +725,22 @@ mod tests {
                 bang: false,
             }))]
         );
+    }
+
+    #[test]
+    fn multiline_if() {
+        let input = tokenize(
+            r#"
+            if true
+            then
+                echo true
+            fi
+            "#,
+            false,
+        ).0;
+        let cmd = parse(input, &mut vec![]);
+
+        println!("{:?}", cmd);
+        assert!(cmd.is_ok());
     }
 }
