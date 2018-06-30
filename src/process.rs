@@ -4,7 +4,7 @@ use std::os::unix::io::IntoRawFd;
 use std::path::Path;
 use std::{iter, process};
 
-use libc::{STDIN_FILENO};
+use libc::STDIN_FILENO;
 use nix;
 use nix::errno::Errno;
 use nix::fcntl::{self, OFlag};
@@ -12,13 +12,14 @@ use nix::sys::stat::Mode;
 use nix::unistd::{self, execvp, getpid, setpgid, ForkResult, Pid};
 use tempfile::tempfile;
 
-use builtin::{Builtin, BuiltinMap};
+use builtin::Builtin;
 use env::UserEnv;
 use file::Fd;
 use input::ast::*;
 use interpolate;
-use options;
+use options::{self, OptionTable};
 use signals;
+use state::ShellState;
 use util;
 
 // The main reason for essentially recreating Redir here is because
@@ -95,8 +96,7 @@ impl fmt::Display for Process {
 }
 
 pub fn exec_cmd(
-    builtins: &mut BuiltinMap,
-    user_env: &mut UserEnv,
+    state: &mut ShellState,
     cmd: SimpleCommand,
     pgid: Pid,
     async: bool,
@@ -113,26 +113,31 @@ pub fn exec_cmd(
     proc.async = async;
 
     if proc.prog.is_none() {
-        update_env(&proc, user_env);
+        update_env(&proc, &mut state.env);
         return Ok(CommandResult(proc, Some(0)));
     }
 
     // Interpolate parameters at the last possible moment
-    interpolate::expand(&mut proc, user_env)?;
+    interpolate::expand(&mut proc, &mut state.env)?;
 
+    let ShellState {
+        ref mut builtins,
+        ref opts,
+        ..
+    } = state;
     let builtin_entry = proc
         .prog
         .as_ref()
         .and_then(|prog| builtins.get_mut(prog.as_str()));
     if let Some(cmd) = builtin_entry {
-        let builtin_result = exec_builtin(&mut proc, cmd, pgid)?;
+        let builtin_result = exec_builtin(&mut proc, cmd, pgid, &opts)?;
         if proc.pid == unistd::getpid() {
             Ok(CommandResult(proc, Some(builtin_result)))
         } else {
             Ok(CommandResult(proc, None))
         }
     } else {
-        fork_proc(&mut proc, pgid).or_else(util::show_err)?;
+        fork_proc(&mut proc, pgid, &opts).or_else(util::show_err)?;
         Ok(CommandResult(proc, None))
     }
 }
@@ -192,14 +197,19 @@ fn add_redirects_to_io(io: &Vec<(i32, IOOp)>) -> Result<(), String> {
     Ok(())
 }
 
-fn fork_process<F>(process: &mut Process, mut pgid: Pid, cmd: F) -> Result<(), nix::Error>
+fn fork_process<F>(
+    process: &mut Process,
+    mut pgid: Pid,
+    cmd: F,
+    opts: &OptionTable,
+) -> Result<(), nix::Error>
 where
     F: FnOnce() -> Result<i32, Error>,
 {
     let f = unistd::fork()?;
     if let ForkResult::Parent { child } = f {
         process.pid = child;
-        if options::is_interactive() {
+        if options::is_interactive(opts) {
             if pgid == Pid::from_raw(0) {
                 pgid = child;
             }
@@ -219,7 +229,7 @@ where
             exit(1);
         }
 
-        if options::is_interactive() {
+        if options::is_interactive(opts) {
             let pid = getpid();
             if pgid == Pid::from_raw(0) {
                 pgid = pid;
@@ -252,6 +262,7 @@ fn exec_builtin(
     process: &mut Process,
     cmd: &mut Box<Builtin>,
     pgid: Pid,
+    opts: &OptionTable,
 ) -> Result<i32, String> {
     let has_redirects = process.io.len() != 2
         || !is_match!(process.io[0], (0, IOOp::Duplicate(0)))
@@ -262,30 +273,35 @@ fn exec_builtin(
         cmd.run(&process.args[..]).or_else(util::show_err)
     } else {
         let args = process.args.clone();
-        fork_process(process, pgid, || cmd.run(&args[..])).or_else(util::show_err)?;
+        fork_process(process, pgid, || cmd.run(&args[..]), opts).or_else(util::show_err)?;
 
         // This result doesn't actually matter since the forked process will be waited for
         Ok(0)
     }
 }
 
-fn fork_proc(process: &mut Process, pgid: Pid) -> Result<(), nix::Error> {
+fn fork_proc(process: &mut Process, pgid: Pid, opts: &OptionTable) -> Result<(), nix::Error> {
     let prog = process.prog.clone().unwrap();
     let args = process.args.clone();
-    fork_process(process, pgid, move || {
-        let args = &iter::once(&prog)
-            .chain(args.iter())
-            .map(|s| CString::new(s.as_bytes()).unwrap())
-            .collect::<Vec<_>>()[..];
+    fork_process(
+        process,
+        pgid,
+        move || {
+            let args = &iter::once(&prog)
+                .chain(args.iter())
+                .map(|s| CString::new(s.as_bytes()).unwrap())
+                .collect::<Vec<_>>()[..];
 
-        let err = execvp(&CString::new(prog.as_bytes()).unwrap(), args).unwrap_err();
+            let err = execvp(&CString::new(prog.as_bytes()).unwrap(), args).unwrap_err();
 
-        match err {
-            nix::Error::Sys(Errno::ENOENT) => print_err!("command not found: {}", prog),
-            nix::Error::Sys(Errno::EACCES) => print_err!("permission denied: {}", prog),
-            nix::Error::Sys(Errno::ENOTDIR) => print_err!("not a directory: {}", prog),
-            _ => {}
-        };
-        Ok(127)
-    })
+            match err {
+                nix::Error::Sys(Errno::ENOENT) => print_err!("command not found: {}", prog),
+                nix::Error::Sys(Errno::EACCES) => print_err!("permission denied: {}", prog),
+                nix::Error::Sys(Errno::ENOTDIR) => print_err!("not a directory: {}", prog),
+                _ => {}
+            };
+            Ok(127)
+        },
+        opts,
+    )
 }

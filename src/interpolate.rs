@@ -5,7 +5,6 @@ use std::iter;
 use libc::{self, STDIN_FILENO, STDOUT_FILENO};
 use nix::unistd::{self, ForkResult};
 
-use builtin;
 use env::UserEnv;
 use eval::{self, InputReader};
 use file::Fd;
@@ -14,6 +13,7 @@ use input::token::Token;
 use input::tokenizer::tokenize;
 use process::Process;
 use signals;
+use state::ShellState;
 
 fn run_command(input: &str) -> String {
     let (pipe_out, pipe_in) = unistd::pipe().unwrap();
@@ -50,8 +50,8 @@ fn run_command(input: &str) -> String {
         unistd::close(STDIN_FILENO).unwrap();
 
         let command = InputReader::Command(input.lines().map(str::to_string).collect());
-        let builtins = builtin::init_builtins();
-        eval::eval(command, builtins);
+        let state = ShellState::new();
+        eval::eval(command, state);
 
         unreachable!()
     }

@@ -4,14 +4,13 @@ use std::io::{BufRead, BufReader};
 use libc::{STDIN_FILENO, STDOUT_FILENO};
 use nix::unistd::{self, Pid};
 
-use builtin::BuiltinMap;
-use env::UserEnv;
 use input::ast::*;
 use input::token::*;
 use input::{parser, prompt, tokenizer};
 use job;
 use options;
 use process::{self, CommandResult};
+use state::ShellState;
 use util;
 
 #[derive(Debug)]
@@ -45,8 +44,7 @@ fn getline(input_method: &mut InputReader, cont: bool) -> Option<String> {
     }
 }
 
-pub fn eval(mut input_reader: InputReader, mut builtins: BuiltinMap) {
-    let mut user_env = UserEnv::new();
+pub fn eval(mut input_reader: InputReader, mut state: ShellState) {
     let mut last_status = 0;
     let mut line = String::new();
 
@@ -122,7 +120,7 @@ pub fn eval(mut input_reader: InputReader, mut builtins: BuiltinMap) {
         }
 
         for command in commands {
-            let res = run_statement(&mut builtins, &mut user_env, command);
+            let res = run_statement(&mut state, command);
             match res {
                 Err(e) => {
                     print_err!("{}", e);
@@ -137,33 +135,24 @@ pub fn eval(mut input_reader: InputReader, mut builtins: BuiltinMap) {
     ::std::process::exit(last_status);
 }
 
-fn run_statement(
-    builtins: &mut BuiltinMap,
-    user_env: &mut UserEnv,
-    statement: Statement,
-) -> Result<i32, String> {
+fn run_statement(state: &mut ShellState, statement: Statement) -> Result<i32, String> {
     match statement {
-        Statement::Async(and_or) => run_and_or(builtins, user_env, and_or, true),
-        Statement::Seq(and_or) => run_and_or(builtins, user_env, and_or, false),
+        Statement::Async(and_or) => run_and_or(state, and_or, true),
+        Statement::Seq(and_or) => run_and_or(state, and_or, false),
     }
 }
 
-fn run_and_or(
-    builtins: &mut BuiltinMap,
-    user_env: &mut UserEnv,
-    list: AndOrList,
-    async: bool,
-) -> Result<i32, String> {
+fn run_and_or(state: &mut ShellState, list: AndOrList, async: bool) -> Result<i32, String> {
     let pipeline = match list {
         AndOrList::And(prev, p) => {
-            let status = run_and_or(builtins, user_env, *prev, false)?;
+            let status = run_and_or(state, *prev, false)?;
             if status != 0 {
                 return Ok(status);
             }
             p
         }
         AndOrList::Or(prev, p) => {
-            let status = run_and_or(builtins, user_env, *prev, false)?;
+            let status = run_and_or(state, *prev, false)?;
             if status == 0 {
                 return Ok(status);
             }
@@ -171,12 +160,11 @@ fn run_and_or(
         }
         AndOrList::Pipeline(p) => p,
     };
-    run_pipeline(builtins, user_env, pipeline, async)
+    run_pipeline(state, pipeline, async)
 }
 
 fn run_pipeline(
-    builtins: &mut BuiltinMap,
-    user_env: &mut UserEnv,
+    state: &mut ShellState,
     mut pipeline: Pipeline,
     async: bool,
 ) -> Result<i32, String> {
@@ -198,8 +186,7 @@ fn run_pipeline(
     // the all others subsequently killed if not done
     for _ in 0..(num_procs - 1) {
         let cmd = pipeline.cmds.remove(0);
-        let CommandResult(proc, _builtin_result) =
-            run_command(builtins, user_env, cmd, pgid, false)?;
+        let CommandResult(proc, _builtin_result) = run_command(state, cmd, pgid, false)?;
         pgid = proc.pgid;
     }
 
@@ -211,15 +198,14 @@ fn run_pipeline(
         multi,
     );
 
-    let CommandResult(last_proc, builtin_result) =
-        run_command(builtins, user_env, last_cmd, pgid, async)?;
+    let CommandResult(last_proc, builtin_result) = run_command(state, last_cmd, pgid, async)?;
 
     let ret;
     {
         let job = job::add_job(&last_proc)?;
         ret = if builtin_result.is_some() {
             builtin_result.unwrap()
-        } else if !options::is_interactive() {
+        } else if !options::is_interactive(&state.opts) {
             job::wait_for_job(&job)?
         } else if async {
             job::background_job(&job)?
@@ -269,35 +255,30 @@ fn add_piped_io_to_command(cmd: &mut Command, pipe_in: Redir, pipe_out: Redir, m
 }
 
 fn run_command(
-    builtins: &mut BuiltinMap,
-    user_env: &mut UserEnv,
+    state: &mut ShellState,
     cmd: Command,
     pgid: Pid,
     async: bool,
 ) -> Result<CommandResult, String> {
     match cmd {
-        Command::SimpleCommand(simple_cmd) => {
-            run_simple_command(builtins, user_env, simple_cmd, pgid, async)
-        }
+        Command::SimpleCommand(simple_cmd) => run_simple_command(state, simple_cmd, pgid, async),
         Command::CompoundCommand(compound_cmd, redirs) => {
-            run_compound_command(builtins, user_env, compound_cmd, redirs, async)
+            run_compound_command(state, compound_cmd, redirs, async)
         }
     }
 }
 
 fn run_simple_command(
-    builtins: &mut BuiltinMap,
-    user_env: &mut UserEnv,
+    state: &mut ShellState,
     cmd: SimpleCommand,
     pgid: Pid,
     async: bool,
 ) -> Result<CommandResult, String> {
-    process::exec_cmd(builtins, user_env, cmd, pgid, async)
+    process::exec_cmd(state, cmd, pgid, async)
 }
 
 fn run_compound_command(
-    _builtins: &mut BuiltinMap,
-    _user_env: &mut UserEnv,
+    _state: &mut ShellState,
     _cmd: CompoundCommand,
     _redirs: Vec<CmdPrefix>,
     _async: bool,

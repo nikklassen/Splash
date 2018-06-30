@@ -25,6 +25,7 @@ pub mod job;
 pub mod options;
 pub mod process;
 pub mod signals;
+pub mod state;
 
 #[allow(dead_code, non_camel_case_types)]
 mod bindings;
@@ -34,10 +35,10 @@ use std::io::BufReader;
 
 use getopts::Options;
 
-use builtin::BuiltinMap;
 use eval::InputReader;
 use options::SOpt;
 use signals::initialize_signals;
+use state::ShellState;
 
 fn main() {
     use std::env;
@@ -61,8 +62,6 @@ fn main() {
         return;
     }
 
-    options::initialize_options();
-
     let input_method = if matches.opt_present("c") {
         let command = matches.opt_str("c").unwrap();
         InputReader::Command(command.lines().map(str::to_string).collect())
@@ -75,13 +74,14 @@ fn main() {
     };
 
     let interactive = is_match!(input_method, InputReader::Stdin);
-    options::set_opt(SOpt::Interactive, interactive);
+    let mut state = initialize_term(interactive);
 
-    let builtins = initialize_term(interactive);
-    eval::eval(input_method, builtins);
+    state.opts.set(SOpt::Interactive, interactive);
+
+    eval::eval(input_method, state);
 }
 
-fn initialize_term(mut interactive: bool) -> BuiltinMap {
+fn initialize_term(mut interactive: bool) -> ShellState {
     use libc::STDIN_FILENO;
     use nix::sys::signal;
     use nix::unistd;
@@ -95,7 +95,7 @@ fn initialize_term(mut interactive: bool) -> BuiltinMap {
 
     initialize_signals();
 
-    let builtins = builtin::init_builtins();
+    let state = ShellState::new();
 
     if interactive {
         // Loop until we are in the foreground.
@@ -128,7 +128,7 @@ fn initialize_term(mut interactive: bool) -> BuiltinMap {
         unistd::tcsetpgrp(shell_terminal, shell_pgid).unwrap();
     }
 
-    builtins
+    state
 }
 
 fn print_version() {

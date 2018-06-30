@@ -1,35 +1,32 @@
-use lazy_static;
 use libc::STDIN_FILENO;
 use nix::unistd::isatty;
 use std::collections::HashMap;
-use util::SharedTable;
 
-#[derive(Debug, Eq, PartialEq, Hash)]
+#[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
 pub enum SOpt {
     Interactive,
 }
 
-pub type OptionTable = HashMap<SOpt, bool>;
+pub struct OptionTable(HashMap<SOpt, bool>);
 
-lazy_static! {
-    static ref OPTIONS: SharedTable<OptionTable> = SharedTable::new(HashMap::new());
+impl OptionTable {
+    pub fn new() -> Self {
+        let mut options = HashMap::new();
+        // Set all options to their default
+        options.insert(SOpt::Interactive, true);
+        OptionTable(options)
+    }
+
+    pub fn get(&self, opt: SOpt) -> bool {
+        // All options will always be set
+        *self.0.get(&opt).unwrap()
+    }
+
+    pub fn set(&mut self, opt: SOpt, value: bool) {
+        self.0.insert(opt, value);
+    }
 }
 
-pub fn initialize_options() {
-    lazy_static::initialize(&OPTIONS);
-
-    let mut options = OPTIONS.get_inner();
-    options.insert(SOpt::Interactive, true);
-}
-
-pub fn get_opt(opt: SOpt) -> bool {
-    *OPTIONS.get_inner().get(&opt).unwrap()
-}
-
-pub fn set_opt(opt: SOpt, value: bool) {
-    let _ = OPTIONS.get_inner().insert(opt, value);
-}
-
-pub fn is_interactive() -> bool {
-    get_opt(SOpt::Interactive) && isatty(STDIN_FILENO).unwrap_or(false)
+pub fn is_interactive(opts: &OptionTable) -> bool {
+    opts.get(SOpt::Interactive) && isatty(STDIN_FILENO).unwrap_or(false)
 }
