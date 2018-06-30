@@ -9,7 +9,7 @@ use input::token::*;
 use input::{parser, prompt, tokenizer};
 use job;
 use options;
-use process::{self, CommandResult};
+use process::{self, CommandResult, Process};
 use state::ShellState;
 use util;
 
@@ -281,10 +281,42 @@ fn run_simple_command(
 }
 
 fn run_compound_command(
-    _state: &mut ShellState,
-    _cmd: CompoundCommand,
+    state: &mut ShellState,
+    cmd: CompoundCommand,
+    // TODO
     _redirs: Vec<CmdPrefix>,
     _async: bool,
 ) -> Result<CommandResult, String> {
-    Err("not implemented".to_string())
+    match cmd {
+        CompoundCommand::If {
+            branches,
+            else_block,
+        } => {
+            let mut last_result = 0;
+            let mut has_branched = false;
+            for IfBranch { condition, block } in branches {
+                for statement in condition {
+                    last_result = run_statement(state, statement)?;
+                }
+                if last_result == 0 {
+                    for statement in block {
+                        last_result = run_statement(state, statement)?;
+                    }
+                    has_branched = true;
+                    break;
+                }
+            }
+            if !has_branched {
+                if let Some(block) = else_block {
+                    for statement in block.into_iter() {
+                        last_result = run_statement(state, statement)?;
+                    }
+                }
+            }
+            Ok(CommandResult(
+                Process::new(Some("if".to_string()), Vec::new(), Vec::new(), Vec::new()),
+                Some(last_result),
+            ))
+        }
+    }
 }

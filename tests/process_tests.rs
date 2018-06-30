@@ -277,3 +277,24 @@ fn expand_command() {
     assert_eq!(result.status, 0);
     assert_eq!(result.stdout, "hi\n\n");
 }
+
+#[test]
+fn if_true_branch() {
+    let result = run_in_splash("if true; then echo true; else echo false; fi");
+    assert_eq!(result.status, 0);
+    assert_eq!(result.stdout, "true\n");
+}
+
+#[test]
+fn if_false_branch() {
+    let result = run_in_splash("if false; then echo true; else echo false; fi");
+    assert_eq!(result.status, 0);
+    assert_eq!(result.stdout, "false\n");
+}
+
+#[test]
+fn if_elif_branch() {
+    let result = run_in_splash("if false; then echo true; elif true; then echo true2; fi");
+    assert_eq!(result.status, 0);
+    assert_eq!(result.stdout, "true2\n");
+}
