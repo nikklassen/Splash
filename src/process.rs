@@ -1,16 +1,15 @@
 use std::ffi::CString;
 use std::io::{Error, Seek, SeekFrom, Write};
-use std::ops::IndexMut;
 use std::os::unix::io::IntoRawFd;
 use std::path::Path;
 use std::{iter, process};
 
-use libc::{STDIN_FILENO, STDOUT_FILENO};
+use libc::{STDIN_FILENO};
 use nix;
 use nix::errno::Errno;
 use nix::fcntl::{self, OFlag};
 use nix::sys::stat::Mode;
-use nix::unistd::{self, execvp, getpid, isatty, setpgid, ForkResult, Pid};
+use nix::unistd::{self, execvp, getpid, setpgid, ForkResult, Pid};
 use tempfile::tempfile;
 
 use builtin::{Builtin, BuiltinMap};
@@ -18,8 +17,7 @@ use env::UserEnv;
 use file::Fd;
 use input::ast::*;
 use interpolate;
-use job;
-use options::{self, SOpt};
+use options;
 use signals;
 use util;
 
@@ -44,6 +42,9 @@ pub struct Process {
     pub env: Vec<CmdPrefix>,
 }
 
+#[derive(Debug)]
+pub struct CommandResult(pub Process, pub Option<i32>);
+
 impl Process {
     pub fn new(
         prog: Option<String>,
@@ -59,6 +60,7 @@ impl Process {
                         Redir::File(name, flags) => IOOp::File(name, flags),
                         Redir::Copy(fd) => IOOp::Duplicate(fd),
                         Redir::Temp(contents) => IOOp::FromString(contents),
+                        Redir::Pipe(fd) => IOOp::Replace(fd),
                     };
                     (fd, op)
                 } else {
@@ -92,62 +94,47 @@ impl fmt::Display for Process {
     }
 }
 
-pub fn run_pipeline(
+pub fn exec_cmd(
     builtins: &mut BuiltinMap,
     user_env: &mut UserEnv,
-    pipeline: Pipeline,
+    cmd: SimpleCommand,
+    pgid: Pid,
     async: bool,
-) -> Result<i32, String> {
-    let mut procs = pipeline_to_processes(pipeline, async).or_else(util::show_err)?;
-    let mut pgid = Pid::from_raw(0);
-    let mut builtin_result: Result<i32, String> = Ok(0);
-
-    // TODO all threads need to be spawned then the last waited for
-    // the all others subsequently killed if not done
-    let has_pipeline = procs.len() > 1;
-    for mut p in procs.iter_mut() {
-        if p.prog.is_none() {
-            update_env(p, user_env);
-            continue;
-        }
-
-        // Interpolate parameters at the last possible moment
-        interpolate::expand(&mut p, user_env)?;
-
-        let builtin_entry = p
-            .prog
-            .as_ref()
-            .and_then(|prog| builtins.get_mut(prog.as_str()));
-        if let Some(cmd) = builtin_entry {
-            builtin_result = exec_builtin(p, cmd, pgid, has_pipeline);
-        } else {
-            fork_proc(p, pgid).or_else(util::show_err)?;
-            pgid = p.pgid;
-        }
-    }
-
-    let last_proc;
-    match procs.iter().rev().find(|p| p.prog.is_some()) {
-        Some(p) => last_proc = p,
-        _ => return Ok(0),
-    }
-    let ret;
-    {
-        let job = job::add_job(&last_proc)?;
-        ret = if job.pid == getpid() {
-            builtin_result
-        } else if !is_interactive() {
-            job::wait_for_job(&job)
-        } else if last_proc.async {
-            job::background_job(&job)
-        } else {
-            job::foreground_job(&job)
-        };
-        job::update_job_status(job.id);
+) -> Result<CommandResult, String> {
+    let mut proc = match cmd {
+        SimpleCommand::Cmd {
+            prog,
+            args,
+            io,
+            env,
+        } => Process::new(prog, args, env, io),
+        _ => unreachable!(),
     };
-    job::update_job_list();
+    proc.async = async;
 
-    ret
+    if proc.prog.is_none() {
+        update_env(&proc, user_env);
+        return Ok(CommandResult(proc, Some(0)));
+    }
+
+    // Interpolate parameters at the last possible moment
+    interpolate::expand(&mut proc, user_env)?;
+
+    let builtin_entry = proc
+        .prog
+        .as_ref()
+        .and_then(|prog| builtins.get_mut(prog.as_str()));
+    if let Some(cmd) = builtin_entry {
+        let builtin_result = exec_builtin(&mut proc, cmd, pgid)?;
+        if proc.pid == unistd::getpid() {
+            Ok(CommandResult(proc, Some(builtin_result)))
+        } else {
+            Ok(CommandResult(proc, None))
+        }
+    } else {
+        fork_proc(&mut proc, pgid).or_else(util::show_err)?;
+        Ok(CommandResult(proc, None))
+    }
 }
 
 pub fn exit(errno: i32) {
@@ -205,69 +192,6 @@ fn add_redirects_to_io(io: &Vec<(i32, IOOp)>) -> Result<(), String> {
     Ok(())
 }
 
-pub fn pipeline_to_processes(pipeline: Pipeline, async: bool) -> Result<Vec<Process>, String> {
-    let cmds: Vec<Command> = pipeline.cmds;
-
-    let mut procs: Vec<Process> = cmds
-        .into_iter()
-        .map(|cmd| match cmd {
-            Command::SimpleCommand(SimpleCommand::Cmd {
-                prog,
-                args,
-                io,
-                env,
-            }) => Process::new(prog, args, env, io),
-            _ => unreachable!(),
-        })
-        .collect();
-
-    let num_procs = procs.len();
-    let mut prev_pipe_out = IOOp::Duplicate(STDIN_FILENO);
-
-    let has_input = |io: &Vec<(i32, IOOp)>| {
-        io.iter()
-            .find(|io_item| io_item.0 == STDIN_FILENO)
-            .is_some()
-    };
-
-    for i in 0..(num_procs - 1) {
-        let ref mut p = procs.index_mut(i);
-        let (pipe_out, pipe_in) = unistd::pipe().or_else(util::show_err)?;
-
-        if has_input(&p.io) {
-            print_err!(
-                "splash: Ignoring piped input for {}; programs may not behave as expected.",
-                p.prog.as_ref().unwrap_or(&String::from("assignment"))
-            );
-        }
-        // insert at the front so these file descriptors will be overwritten by anything later
-        p.io.insert(0, (STDOUT_FILENO, IOOp::Replace(pipe_in)));
-        p.io.insert(0, (STDIN_FILENO, prev_pipe_out));
-
-        prev_pipe_out = IOOp::Replace(pipe_out);
-    }
-
-    // End the borrow of procs before we return it
-    {
-        let last_proc = procs.last_mut().unwrap();
-        last_proc.async = async;
-
-        if num_procs > 1 && has_input(&last_proc.io) {
-            print_err!(
-                "splash: Ignoring piped input for {}; programs may not behave as expected.",
-                last_proc
-                    .prog
-                    .as_ref()
-                    .unwrap_or(&String::from("assignment"))
-            );
-        }
-        let stdout_dup = IOOp::Duplicate(STDOUT_FILENO);
-        last_proc.io.insert(0, (STDOUT_FILENO, stdout_dup));
-        last_proc.io.insert(0, (STDIN_FILENO, prev_pipe_out));
-    }
-    Ok(procs)
-}
-
 fn fork_process<F>(process: &mut Process, mut pgid: Pid, cmd: F) -> Result<(), nix::Error>
 where
     F: FnOnce() -> Result<i32, Error>,
@@ -275,7 +199,7 @@ where
     let f = unistd::fork()?;
     if let ForkResult::Parent { child } = f {
         process.pid = child;
-        if is_interactive() {
+        if options::is_interactive() {
             if pgid == Pid::from_raw(0) {
                 pgid = child;
             }
@@ -295,7 +219,7 @@ where
             exit(1);
         }
 
-        if is_interactive() {
+        if options::is_interactive() {
             let pid = getpid();
             if pgid == Pid::from_raw(0) {
                 pgid = pid;
@@ -328,13 +252,12 @@ fn exec_builtin(
     process: &mut Process,
     cmd: &mut Box<Builtin>,
     pgid: Pid,
-    has_pipeline: bool,
 ) -> Result<i32, String> {
     let has_redirects = process.io.len() != 2
         || !is_match!(process.io[0], (0, IOOp::Duplicate(0)))
         || !is_match!(process.io[1], (1, IOOp::Duplicate(1)));
 
-    if !has_pipeline && !has_redirects {
+    if !has_redirects {
         process.pid = getpid();
         cmd.run(&process.args[..]).or_else(util::show_err)
     } else {
@@ -365,8 +288,4 @@ fn fork_proc(process: &mut Process, pgid: Pid) -> Result<(), nix::Error> {
         };
         Ok(127)
     })
-}
-
-fn is_interactive() -> bool {
-    options::get_opt(SOpt::Interactive) && isatty(STDIN_FILENO).unwrap_or(false)
 }

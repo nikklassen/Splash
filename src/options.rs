@@ -1,4 +1,6 @@
 use lazy_static;
+use libc::STDIN_FILENO;
+use nix::unistd::isatty;
 use std::collections::HashMap;
 use util::SharedTable;
 
@@ -26,4 +28,8 @@ pub fn get_opt(opt: SOpt) -> bool {
 
 pub fn set_opt(opt: SOpt, value: bool) {
     let _ = OPTIONS.get_inner().insert(opt, value);
+}
+
+pub fn is_interactive() -> bool {
+    get_opt(SOpt::Interactive) && isatty(STDIN_FILENO).unwrap_or(false)
 }

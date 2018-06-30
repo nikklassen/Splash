@@ -1,12 +1,18 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
+use libc::{STDIN_FILENO, STDOUT_FILENO};
+use nix::unistd::{self, Pid};
+
 use builtin::BuiltinMap;
 use env::UserEnv;
 use input::ast::*;
 use input::token::*;
 use input::{parser, prompt, tokenizer};
-use process;
+use job;
+use options;
+use process::{self, CommandResult};
+use util;
 
 #[derive(Debug)]
 pub enum InputReader {
@@ -165,5 +171,136 @@ fn run_and_or(
         }
         AndOrList::Pipeline(p) => p,
     };
-    process::run_pipeline(builtins, user_env, pipeline, async)
+    run_pipeline(builtins, user_env, pipeline, async)
+}
+
+fn run_pipeline(
+    builtins: &mut BuiltinMap,
+    user_env: &mut UserEnv,
+    mut pipeline: Pipeline,
+    async: bool,
+) -> Result<i32, String> {
+    let num_procs = pipeline.cmds.len();
+    let mut prev_pipe_out = Redir::Copy(STDIN_FILENO);
+
+    let multi = num_procs > 1;
+    for i in 0..(num_procs - 1) {
+        let p = &mut pipeline.cmds[i];
+        let (pipe_out, pipe_in) = unistd::pipe().or_else(util::show_err)?;
+
+        add_piped_io_to_command(p, prev_pipe_out, Redir::Pipe(pipe_in), multi);
+
+        prev_pipe_out = Redir::Pipe(pipe_out);
+    }
+
+    let mut pgid = Pid::from_raw(0);
+    // TODO all threads need to be spawned then the last waited for
+    // the all others subsequently killed if not done
+    for _ in 0..(num_procs - 1) {
+        let cmd = pipeline.cmds.remove(0);
+        let CommandResult(proc, _builtin_result) =
+            run_command(builtins, user_env, cmd, pgid, false)?;
+        pgid = proc.pgid;
+    }
+
+    let mut last_cmd = pipeline.cmds.remove(0);
+    add_piped_io_to_command(
+        &mut last_cmd,
+        prev_pipe_out,
+        Redir::Copy(STDOUT_FILENO),
+        multi,
+    );
+
+    let CommandResult(last_proc, builtin_result) =
+        run_command(builtins, user_env, last_cmd, pgid, async)?;
+
+    let ret;
+    {
+        let job = job::add_job(&last_proc)?;
+        ret = if builtin_result.is_some() {
+            builtin_result.unwrap()
+        } else if !options::is_interactive() {
+            job::wait_for_job(&job)?
+        } else if async {
+            job::background_job(&job)?
+        } else {
+            job::foreground_job(&job)?
+        };
+        job::update_job_status(job.id);
+    };
+    job::update_job_list();
+
+    Ok(ret)
+}
+
+fn add_piped_io_to_command(cmd: &mut Command, pipe_in: Redir, pipe_out: Redir, multi: bool) {
+    let io = match cmd {
+        Command::SimpleCommand(SimpleCommand::Cmd { ref mut io, .. }) => io,
+        Command::CompoundCommand(_, ref mut io) => io,
+        // EqlStmt
+        _ => {
+            return;
+        }
+    };
+
+    let has_input = io
+        .iter()
+        .find(|io_item| is_match!(io_item, CmdPrefix::IORedirect { fd: STDIN_FILENO, .. }))
+        .is_some();
+
+    if multi && has_input {
+        print_err!("splash: Ignoring piped input; programs may not behave as expected.");
+    }
+    // insert at the front so these file descriptors will be overwritten by anything later
+    io.insert(
+        0,
+        CmdPrefix::IORedirect {
+            fd: STDOUT_FILENO,
+            target: pipe_out,
+        },
+    );
+    io.insert(
+        0,
+        CmdPrefix::IORedirect {
+            fd: STDIN_FILENO,
+            target: pipe_in,
+        },
+    );
+}
+
+fn run_command(
+    builtins: &mut BuiltinMap,
+    user_env: &mut UserEnv,
+    cmd: Command,
+    pgid: Pid,
+    async: bool,
+) -> Result<CommandResult, String> {
+    match cmd {
+        Command::SimpleCommand(simple_cmd) => {
+            run_simple_command(builtins, user_env, simple_cmd, pgid, async)
+        }
+        Command::CompoundCommand(compound_cmd, redirs) => {
+            run_compound_command(builtins, user_env, compound_cmd, redirs, async)
+        }
+    }
+}
+
+fn run_simple_command(
+    builtins: &mut BuiltinMap,
+    user_env: &mut UserEnv,
+    cmd: SimpleCommand,
+    pgid: Pid,
+    async: bool,
+) -> Result<CommandResult, String> {
+    process::exec_cmd(builtins, user_env, cmd, pgid, async)
+}
+
+fn run_compound_command(
+    _builtins: &mut BuiltinMap,
+    _user_env: &mut UserEnv,
+    _cmd: CompoundCommand,
+    _redirs: Vec<CmdPrefix>,
+    _async: bool,
+) -> Result<CommandResult, String> {
+    Err("not implemented".to_string())
 }

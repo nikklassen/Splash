@@ -8,6 +8,8 @@ pub enum Redir {
     Copy(i32),
     File(String, OFlag),
     Temp(String),
+    // Essentially the same as the Replace IOOp
+    Pipe(i32),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
