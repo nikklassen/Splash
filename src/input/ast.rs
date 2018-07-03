@@ -44,9 +44,9 @@ pub enum CompoundCommand {
         branches: Vec<IfBranch>,
         else_block: Option<Box<Vec<Statement>>>,
     },
+    SubShell(Vec<Statement>),
+    BraceGroup(Vec<Statement>),
     // TODO
-    // BraceGroup,
-    // Subshell,
     // For
     // Case
     // While

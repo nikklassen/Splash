@@ -280,6 +280,14 @@ fn run_simple_command(
     process::exec_cmd(state, cmd, pgid, async)
 }
 
+fn run_statements(state: &mut ShellState, statements: Vec<Statement>) -> Result<i32, String> {
+    let mut last_result = 0;
+    for statement in statements {
+        last_result = run_statement(state, statement)?;
+    }
+    Ok(last_result)
+}
+
 fn run_compound_command(
     state: &mut ShellState,
     cmd: CompoundCommand,
@@ -287,6 +295,17 @@ fn run_compound_command(
     _redirs: Vec<CmdPrefix>,
     _async: bool,
 ) -> Result<CommandResult, String> {
+    let wrap_result = |cmd_name: &str, result: i32| {
+        Ok(CommandResult(
+            Process::new(
+                Some(cmd_name.to_string()),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+            Some(result),
+        ))
+    };
     match cmd {
         CompoundCommand::If {
             branches,
@@ -295,28 +314,28 @@ fn run_compound_command(
             let mut last_result = 0;
             let mut has_branched = false;
             for IfBranch { condition, block } in branches {
-                for statement in condition {
-                    last_result = run_statement(state, statement)?;
-                }
+                last_result = run_statements(state, condition)?;
                 if last_result == 0 {
-                    for statement in block {
-                        last_result = run_statement(state, statement)?;
-                    }
+                    last_result = run_statements(state, block)?;
                     has_branched = true;
                     break;
                 }
             }
             if !has_branched {
                 if let Some(block) = else_block {
-                    for statement in block.into_iter() {
-                        last_result = run_statement(state, statement)?;
-                    }
+                    last_result = run_statements(state, *block)?;
                 }
             }
-            Ok(CommandResult(
-                Process::new(Some("if".to_string()), Vec::new(), Vec::new(), Vec::new()),
-                Some(last_result),
-            ))
+            wrap_result("if", last_result)
+        }
+        CompoundCommand::BraceGroup(block) => {
+            let last_result = run_statements(state, block)?;
+            wrap_result("{ .. }", last_result)
+        }
+        CompoundCommand::SubShell(block) => {
+            let mut new_state = ShellState::from(state);
+            let last_result = run_statements(&mut new_state, block)?;
+            wrap_result("( .. )", last_result)
         }
     }
 }

@@ -1,3 +1,4 @@
+use env::UserEnv;
 use getopts::Options;
 use std::collections::HashMap;
 use std::env;
@@ -10,20 +11,31 @@ use job;
 const SUCCESS: io::Result<i32> = Ok(0);
 
 pub trait Builtin {
-    fn run(&mut self, args: &[String]) -> io::Result<i32>;
+    fn run(&mut self, args: &[String], env: &mut UserEnv) -> io::Result<i32>;
+    fn dup(&self) -> Box<Builtin>;
 }
 
-impl<F> Builtin for F
-where
-    F: FnMut(&[String]) -> io::Result<i32>,
-{
-    fn run(&mut self, args: &[String]) -> io::Result<i32> {
-        self(args)
+pub struct SimpleBuiltin(fn(&[String], &mut UserEnv) -> io::Result<i32>);
+
+impl Clone for SimpleBuiltin {
+    fn clone(&self) -> Self {
+        SimpleBuiltin(self.0)
+    }
+}
+
+impl Builtin for SimpleBuiltin where {
+    fn run(&mut self, args: &[String], env: &mut UserEnv) -> io::Result<i32> {
+        self.0(args, env)
+    }
+
+    fn dup(&self) -> Box<Builtin> {
+        Box::new(self.clone())
     }
 }
 
 pub type BuiltinMap = HashMap<&'static str, Box<Builtin>>;
 
+#[derive(Clone)]
 struct Cd {
     prev_dir: String,
 }
@@ -34,13 +46,17 @@ impl Cd {
         Cd { prev_dir: pwd }
     }
 
-    fn change_to<P: AsRef<Path>>(&mut self, p: &P) -> io::Result<()> {
-        let pwd = env::var("PWD").unwrap_or(String::new());
+    fn change_to<P: AsRef<Path>>(&mut self, p: &P, env: &mut UserEnv) -> io::Result<()> {
+        let pwd = env.get("PWD");
         self.prev_dir = pwd;
 
         let new_pwd_buf = normalize_logical_path(&p);
-        try!(env::set_current_dir(&new_pwd_buf));
-        env::set_var("PWD", &new_pwd_buf);
+        env::set_current_dir(&new_pwd_buf)?;
+        let path_str = new_pwd_buf.to_str().ok_or(io::Error::new(
+            io::ErrorKind::Other,
+            "Invalid characters in path",
+        ))?;
+        env.set("PWD", path_str);
         Ok(())
     }
 }
@@ -61,38 +77,42 @@ fn normalize_logical_path<P: AsRef<Path>>(path: &P) -> PathBuf {
 }
 
 impl Builtin for Cd {
-    fn run(&mut self, args: &[String]) -> io::Result<i32> {
+    fn run(&mut self, args: &[String], env: &mut UserEnv) -> io::Result<i32> {
         if args.len() == 0 {
-            if let Ok(home) = env::var("HOME") {
-                if home.len() != 0 {
-                    return self.change_to(&PathBuf::from(&home)).and(SUCCESS);
-                }
+            let home = env.get("HOME");
+            if home.len() != 0 {
+                return self.change_to(&PathBuf::from(&home), env).and(SUCCESS);
             }
             return SUCCESS;
         }
 
         if args[0] == "-" {
             let prev_dir = self.prev_dir.clone();
-            return self.change_to(&prev_dir).and(SUCCESS);
+            return self.change_to(&prev_dir, env).and(SUCCESS);
         }
 
-        let cur_dir = env::current_dir();
-        let mut pwd_buf = env::var("PWD")
-            .map(|p| PathBuf::from(p))
-            .or(cur_dir)
-            .unwrap();
+        let pwd = env.get("PWD");
+        let mut pwd_buf = if pwd == "" {
+            env::current_dir()?
+        } else {
+            PathBuf::from(pwd)
+        };
         pwd_buf.push(&args[0]);
 
-        self.change_to(&pwd_buf).and(SUCCESS)
+        self.change_to(&pwd_buf, env).and(SUCCESS)
+    }
+
+    fn dup(&self) -> Box<Builtin> {
+        Box::new(self.clone())
     }
 }
 
-fn pwd(_args: &[String]) -> io::Result<i32> {
-    println!("{}", env::var("PWD").unwrap_or(String::new()));
+fn pwd(_args: &[String], env: &mut UserEnv) -> io::Result<i32> {
+    println!("{}", env.get("PWD"));
     SUCCESS
 }
 
-fn echo(args: &[String]) -> io::Result<i32> {
+fn echo(args: &[String], _env: &mut UserEnv) -> io::Result<i32> {
     let mut opts = Options::new();
 
     opts.optflag("n", "", "Suppress new lines");
@@ -118,51 +138,59 @@ fn echo(args: &[String]) -> io::Result<i32> {
     SUCCESS
 }
 
-fn fg(_args: &[String]) -> io::Result<i32> {
+fn fg(_args: &[String], _env: &mut UserEnv) -> io::Result<i32> {
     let res = job::start_job(true)?;
     Ok(res)
 }
 
-fn bg(_args: &[String]) -> io::Result<i32> {
+fn bg(_args: &[String], _env: &mut UserEnv) -> io::Result<i32> {
     let res = job::start_job(false)?;
     Ok(res)
 }
 
-fn jobs(_args: &[String]) -> io::Result<i32> {
+fn jobs(_args: &[String], _env: &mut UserEnv) -> io::Result<i32> {
     job::print_jobs();
     Ok(0)
 }
 
-macro_rules! add_builtins {
+macro_rules! add_builtin_fns {
     ($map:ident, [ $( ($n:expr, $cmd:expr) ),* ] ) => {{
         $($map.insert(
                 $n,
-                Box::new($cmd) as Box<Builtin>
+                Box::new(SimpleBuiltin($cmd)) as Box<Builtin>
                 );)*
     }}
 }
 
-fn builtin_true(_args: &[String]) -> io::Result<i32> {
+fn builtin_true(_args: &[String], _env: &mut UserEnv) -> io::Result<i32> {
     SUCCESS
 }
 
 pub fn init_builtins() -> BuiltinMap {
-    let mut builtins = HashMap::new();
-    add_builtins!(
+    let mut builtins: BuiltinMap = HashMap::new();
+    builtins.insert("cd", Box::new(Cd::new()));
+    add_builtin_fns!(
         builtins,
         [
-            ("cd", Cd::new()),
             ("echo", echo),
             ("pwd", pwd),
             ("fg", fg),
             ("bg", bg),
             ("jobs", jobs),
             ("true", builtin_true),
-            ("false", |_args: &[String]| Ok(1)),
+            ("false", |_args: &[String], _env: &mut UserEnv| Ok(1)),
             (":", builtin_true)
         ]
     );
     builtins
+}
+
+pub fn clone_builtins(builtins: &BuiltinMap) -> BuiltinMap {
+    let mut builtins_clone: BuiltinMap = HashMap::new();
+    for (cmd, func) in builtins.iter() {
+        builtins_clone.insert(cmd, func.dup());
+    }
+    builtins_clone
 }
 
 #[cfg(test)]
@@ -210,42 +238,47 @@ mod tests {
 
         fn cd_with_no_args(&mut self) {
             let home = String::from("/");
-            env::set_var("HOME", &home);
+            let mut user_env = UserEnv::new();
+            user_env.set("HOME", &home);
 
             let mut cd = Cd::new();
-            cd.run(&[]).unwrap();
+            cd.run(&[], &mut user_env).unwrap();
 
-            assert_eq!(env::var("PWD"), Ok(home));
+            assert_eq!(user_env.get("PWD"), home);
         }
 
         fn cd_with_absolute_arg(&mut self) {
             let dir = String::from("/");
-            env::set_var("PWD", &self.pwd);
+            let mut user_env = UserEnv::new();
+            user_env.set("PWD", &pathbuf_to_string(&self.pwd));
 
             let mut cd = Cd::new();
-            cd.run(&[dir.clone()]).unwrap();
+            cd.run(&[dir.clone()], &mut user_env).unwrap();
 
-            assert_eq!(env::var("PWD"), Ok(dir));
+            assert_eq!(user_env.get("PWD"), dir);
         }
 
         fn cd_with_relative_arg(&mut self) {
             let mut pwd = self.pwd.clone();
             pwd.pop();
-            env::set_var("PWD", &pwd);
+            let mut user_env = UserEnv::new();
+            user_env.set("PWD", &pathbuf_to_string(&pwd));
+
             env::set_current_dir("..").unwrap();
 
             let mut cd = Cd::new();
-            cd.run(&[String::from("pwd")]).unwrap();
+            cd.run(&[String::from("pwd")], &mut user_env).unwrap();
 
             assert_eq!(env::var("PWD"), Ok(pathbuf_to_string(&self.pwd)));
         }
 
         fn cd_previous_directory(&mut self) {
+            let mut user_env = UserEnv::new();
             let mut cd = Cd::new();
-            cd.run(&[String::from("..")]).unwrap();
-            cd.run(&[String::from("-")]).unwrap();
+            cd.run(&[String::from("..")], &mut user_env).unwrap();
+            cd.run(&[String::from("-")], &mut user_env).unwrap();
 
-            assert_eq!(env::var("PWD"), Ok(pathbuf_to_string(&self.pwd)));
+            assert_eq!(user_env.get("PWD"), pathbuf_to_string(&self.pwd));
         }
     }
 

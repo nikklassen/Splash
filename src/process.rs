@@ -115,25 +115,25 @@ pub fn exec_cmd(
     };
     proc.async = async;
 
+    let ShellState {
+        ref mut builtins,
+        ref opts,
+        ref mut env,
+    } = state;
     if proc.prog.is_none() {
-        update_env(&proc, &mut state.env);
+        update_env(&proc, env);
         return Ok(CommandResult(proc, Some(0)));
     }
 
     // Interpolate parameters at the last possible moment
-    interpolate::expand(&mut proc, &mut state.env)?;
+    interpolate::expand(&mut proc, env)?;
 
-    let ShellState {
-        ref mut builtins,
-        ref opts,
-        ..
-    } = state;
     let builtin_entry = proc
         .prog
         .as_ref()
         .and_then(|prog| builtins.get_mut(prog.as_str()));
     if let Some(cmd) = builtin_entry {
-        let builtin_result = exec_builtin(&mut proc, cmd, pgid, &opts)?;
+        let builtin_result = exec_builtin(&mut proc, cmd, pgid, &opts, env)?;
         if proc.pid == unistd::getpid() {
             Ok(CommandResult(proc, Some(builtin_result)))
         } else {
@@ -153,7 +153,7 @@ pub fn exit(errno: i32) {
 fn update_env(p: &Process, user_env: &mut UserEnv) {
     for assignment in p.env.iter() {
         if let &CmdPrefix::Assignment { ref lhs, ref rhs } = assignment {
-            user_env.vars.insert(lhs.clone(), rhs.clone());
+            user_env.set(lhs, rhs);
         }
     }
 }
@@ -266,6 +266,7 @@ fn exec_builtin(
     cmd: &mut Box<Builtin>,
     pgid: Pid,
     opts: &OptionTable,
+    env: &mut UserEnv,
 ) -> Result<i32, String> {
     let has_redirects = process.io.len() != 2
         || !is_match!(process.io[0], (0, IOOp::Duplicate(0)))
@@ -273,10 +274,10 @@ fn exec_builtin(
 
     if !has_redirects {
         process.pid = getpid();
-        cmd.run(&process.args[..]).or_else(util::show_err)
+        cmd.run(&process.args[..], env).or_else(util::show_err)
     } else {
         let args = process.args.clone();
-        fork_process(process, pgid, || cmd.run(&args[..]), opts).or_else(util::show_err)?;
+        fork_process(process, pgid, || cmd.run(&args[..], env), opts).or_else(util::show_err)?;
 
         // This result doesn't actually matter since the forked process will be waited for
         Ok(0)

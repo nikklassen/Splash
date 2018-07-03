@@ -7,6 +7,7 @@ pub enum SOpt {
     Interactive,
 }
 
+#[derive(Debug, Clone)]
 pub struct OptionTable(HashMap<SOpt, bool>);
 
 impl OptionTable {

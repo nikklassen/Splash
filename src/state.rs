@@ -18,3 +18,13 @@ impl ShellState {
         }
     }
 }
+
+impl ShellState {
+    pub fn from(other: &Self) -> Self {
+        ShellState {
+            builtins: builtin::clone_builtins(&other.builtins),
+            env: other.env.clone(),
+            opts: other.opts.clone(),
+        }
+    }
+}

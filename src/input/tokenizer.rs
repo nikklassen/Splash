@@ -1,6 +1,6 @@
 use std::collections::hash_map::*;
 
-use super::token::Token;
+use super::token::{ReservedWord, Token};
 
 #[derive(PartialEq)]
 enum TokenState {
@@ -10,15 +10,15 @@ enum TokenState {
 
 fn is_op_prefix(c: char) -> bool {
     match c {
-        '&' | '|' | '<' | '>' | ';' => true,
+        '&' | '|' | '<' | '>' | ';' | '(' | ')' => true,
         _ => false,
     }
 }
 
-fn add_token(keyword_table: &HashMap<&str, Token>, tokens: &mut Vec<Token>, s: &str) {
+fn add_token(reserved_word_table: &HashMap<&str, ReservedWord>, tokens: &mut Vec<Token>, s: &str) {
     if s.len() > 0 {
-        if let Some(keyword) = keyword_table.get(s) {
-            tokens.push(keyword.clone());
+        if let Some(keyword) = reserved_word_table.get(s) {
+            tokens.push(Token::Reserved(*keyword));
         } else {
             tokens.push(Token::Word(s.to_owned()));
         }
@@ -42,16 +42,20 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
         "||" => Token::OR,
         ";;" => Token::DSEMI,
         // Non-operators, but prefixes
-        "|" => Token::Pipe,
-        "&" => Token::Async,
-        ";" => Token::Semi,
+        "|" => Token::PIPE,
+        "&" => Token::ASYNC,
+        ";" => Token::SEMI,
+        "(" => Token::LPAREN,
+        ")" => Token::RPAREN,
     };
-    let keyword_table: HashMap<&str, Token> = hash_map!{
-        "if" => Token::If,
-        "elif" => Token::Elif,
-        "then" => Token::Then,
-        "else" => Token::Else,
-        "fi" => Token::Fi,
+    let reserved_word_table: HashMap<&str, ReservedWord> = hash_map!{
+        "if" => ReservedWord::IF,
+        "elif" => ReservedWord::ELIF,
+        "then" => ReservedWord::THEN,
+        "else" => ReservedWord::ELSE,
+        "fi" => ReservedWord::FI,
+        "{" => ReservedWord::LBRACE,
+        "}" => ReservedWord::RBRACE,
     };
 
     let mut chars = input.chars().peekable();
@@ -168,11 +172,9 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
                         }
                     }
                 }
-            } else if c == '}' {
-                if param_nesting > 0 {
-                    param_nesting -= 1;
-                }
-            } else if c == ')' {
+            } else if c == '}' && param_nesting > 0 {
+                param_nesting -= 1;
+            } else if c == ')' && (arithmetic_nesting > 0 || command_nesting > 0) {
                 let lookahead = chars.peek().map(|c| *c);
                 if let Some(next) = lookahead {
                     if next == ')' {
@@ -197,10 +199,10 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
                     if let Ok(n) = token.parse::<i32>() {
                         tokens.push(Token::IONumber(n));
                     } else {
-                        add_token(&keyword_table, &mut tokens, &token);
+                        add_token(&reserved_word_table, &mut tokens, &token);
                     }
                 } else {
-                    add_token(&keyword_table, &mut tokens, &token);
+                    add_token(&reserved_word_table, &mut tokens, &token);
                 }
                 token.clear();
                 state = TokenState::OPERATOR;
@@ -209,8 +211,8 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
             else if c == '\n'
                 && arithmetic_nesting + command_nesting + param_nesting + quote_nesting == 0
             {
-                add_token(&keyword_table, &mut tokens, &token);
-                tokens.push(Token::LineBreak);
+                add_token(&reserved_word_table, &mut tokens, &token);
+                tokens.push(Token::LINEBREAK);
                 token.clear();
                 skip_char = true;
             }
@@ -218,13 +220,13 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
             else if c.is_whitespace()
                 && arithmetic_nesting + command_nesting + param_nesting + quote_nesting == 0
             {
-                add_token(&keyword_table, &mut tokens, &token);
+                add_token(&reserved_word_table, &mut tokens, &token);
                 token.clear();
                 skip_char = true;
             }
             // Rule 10
             else if c == '#' {
-                add_token(&keyword_table, &mut tokens, &token);
+                add_token(&reserved_word_table, &mut tokens, &token);
                 token.clear();
 
                 while let Some(next) = chars.next() {
@@ -232,7 +234,7 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
                         break;
                     }
                 }
-                tokens.push(Token::LineBreak);
+                tokens.push(Token::LINEBREAK);
                 skip_char = true;
             }
         }
@@ -247,7 +249,7 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
         let op = operator_table.get(token.as_str()).unwrap().clone();
         tokens.push(op);
     } else {
-        add_token(&keyword_table, &mut tokens, &token);
+        add_token(&reserved_word_table, &mut tokens, &token);
     }
 
     unterminated |= arithmetic_nesting + command_nesting + param_nesting + quote_nesting > 0;
@@ -443,7 +445,7 @@ mod tests {
     fn tokenize_comment() {
         let input = "# abc";
         let (t, _) = tokenize(input, false);
-        assert_eq!(t, vec![Token::LineBreak]);
+        assert_eq!(t, vec![Token::LINEBREAK]);
     }
 
     #[test]

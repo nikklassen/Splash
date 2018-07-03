@@ -58,7 +58,7 @@ fn run_command(input: &str) -> String {
 }
 
 fn split_fields(word: &String, user_env: &UserEnv) -> Vec<String> {
-    let ifs = user_env.get_var("IFS");
+    let ifs = user_env.get("IFS");
     word.split(|c| ifs.contains(c))
         .filter(|s| s.len() > 0)
         .map(str::to_owned)
@@ -119,7 +119,7 @@ fn parameter_expansion(
                     .take_while(|c| *c == '_' || c.is_alphanumeric())
                     .collect()
             };
-            let param = user_env.get_var(&param_name);
+            let param = user_env.get(&param_name);
             result = param;
         } else {
             let rest: String = iter::once('$').chain(chars.clone()).collect();
@@ -152,7 +152,7 @@ fn parameter_expansion(
                     return Err("Bad substitution".to_string());
                 }
 
-                user_env.get_var(&param_name)
+                user_env.get(&param_name)
             } else {
                 unreachable!()
             };
@@ -303,8 +303,8 @@ mod tests {
 
     fn make_test_env() -> UserEnv {
         let mut user_env = UserEnv::new();
-        user_env.vars.insert("TEST".to_string(), val());
-        user_env.vars.insert("IFS".to_string(), " \t\n".to_string());
+        user_env.set("TEST", &val());
+        user_env.set("IFS", " \t\n");
         user_env
     }
 
@@ -430,7 +430,7 @@ mod tests {
     #[test]
     fn expand_parameter_single_digit() {
         let mut user_env = make_test_env();
-        user_env.vars.insert("0".to_string(), "A".to_string());
+        user_env.set("0", "A");
         let toks = "$01".to_string();
         let word = expand_word(&toks, &user_env, false).unwrap();
 
@@ -448,9 +448,7 @@ mod tests {
     #[test]
     fn split_expanded_var() {
         let mut user_env = make_test_env();
-        user_env
-            .vars
-            .insert("X".to_string(), "A           B".to_string());
+        user_env.set("X", "A           B");
         let toks = "$X".to_string();
         let words = expand_word(&toks, &user_env, false).unwrap();
 
@@ -461,7 +459,7 @@ mod tests {
     fn no_split_in_quotes() {
         let mut user_env = make_test_env();
         let val = "A  B".to_string();
-        user_env.vars.insert("A".to_string(), val.clone());
+        user_env.set("A", &val);
         let toks = r#""$A""#.to_string();
         let words = expand_word(&toks, &user_env, false).unwrap();
 
@@ -471,9 +469,7 @@ mod tests {
     #[test]
     fn split_command_into_args() {
         let mut user_env = make_test_env();
-        user_env
-            .vars
-            .insert("X".to_string(), "A           B".to_string());
+        user_env.set("X", "A           B");
         let mut p = Process::new(Some("$X".to_string()), Vec::new(), Vec::new(), Vec::new());
         let res = expand(&mut p, &user_env);
 

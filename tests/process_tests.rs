@@ -298,3 +298,29 @@ fn if_elif_branch() {
     assert_eq!(result.status, 0);
     assert_eq!(result.stdout, "true2\n");
 }
+
+#[test]
+fn brace_group_vars() {
+    let result = run_in_splash("A=B; { A=C; echo $A; }; echo $A");
+    assert_eq!(result.status, 0);
+    assert_eq!(result.stdout, "C\nC\n");
+}
+
+#[test]
+fn subshell_vars() {
+    let result = run_in_splash("A=B; ( A=C; echo $A; ); echo $A");
+    assert_eq!(result.status, 0);
+    assert_eq!(result.stdout, "C\nB\n");
+}
+
+#[test]
+fn subshell_pwd() {
+    let result = run_in_splash(
+        r#"
+    (cd ..)
+    echo "$PWD"
+    "#,
+    );
+    assert_eq!(result.status, 0);
+    assert_eq!(result.stdout.trim(), env::var("PWD").unwrap());
+}

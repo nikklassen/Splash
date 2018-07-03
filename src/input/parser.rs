@@ -1,7 +1,23 @@
 use super::ast::*;
-use super::token::{self, Token};
+use super::token::{self, ReservedWord, Token};
 use combine::easy;
 use combine::*;
+
+parser! {
+    fn word_or_reserved[I]()(I) -> String
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        satisfy(|t| is_match!(t, Token::Word(_)) || is_match!(t, Token::Reserved(_)))
+            .map(|t| {
+                match t {
+                    Token::Word(w) => w,
+                    Token::Reserved(r) => format!("{}", r),
+                    _ => unreachable!(),
+                }
+            })
+    }
+}
 
 parser! {
     fn word[I]()(I) -> String
@@ -10,10 +26,9 @@ parser! {
     ] {
         satisfy(|t| is_match!(t, Token::Word(_)))
             .map(|t| {
-                if let Token::Word(w) = t {
-                    w
-                } else {
-                    unreachable!()
+                match t {
+                    Token::Word(w) => w,
+                    _ => unreachable!(),
                 }
             })
     }
@@ -61,27 +76,34 @@ parser! {
         I: Stream<Item = Token>,
     ] {
         let cmd_prefix = many1(choice![io_redirect(), assignment()]);
-        let cmd_word = || word();
+        let cmd_words = || {
+            word()
+                .and(many(word_or_reserved()))
+                .map(|(w, mut ws): (String, Vec<String>)| { ws.insert(0, w); ws })
+        };
 
-        (cmd_prefix.and(many(cmd_word())))
-        .or(many1(cmd_word()).map(|w| (vec![], w)))
-        // TODO redirects and args can be interleaved
-        .and(many(io_redirect()))
-        .map(|((cmd_prefix, mut cmd_args), redirect_suffix): ((Vec<CmdPrefix>, Vec<String>), Vec<CmdPrefix>)| {
-            let mut prog = None;
-            let mut args: Vec<String> = Vec::new();
-            if cmd_args.len() > 0 {
-                prog = Some(cmd_args.remove(0));
-                args = cmd_args;
-            }
-            let (env, io) = cmd_prefix.into_iter().partition(|r| is_match!(r, &CmdPrefix::Assignment { .. }));
-            SimpleCommand::Cmd {
-                prog: prog,
-                args: args,
-                env: env,
-                io: io.into_iter().chain(redirect_suffix).collect(),
-            }
-        })
+        cmd_prefix
+            .and(
+                optional(cmd_words())
+                    .map(|words_opt| words_opt.unwrap_or(Vec::new())))
+            .or(cmd_words().map(|w| (vec![], w)))
+            // TODO redirects and args can be interleaved
+            .and(many(io_redirect()))
+            .map(|((cmd_prefix, mut cmd_args), redirect_suffix): ((Vec<CmdPrefix>, Vec<String>), Vec<CmdPrefix>)| {
+                let mut prog = None;
+                let mut args: Vec<String> = Vec::new();
+                if cmd_args.len() > 0 {
+                    prog = Some(cmd_args.remove(0));
+                    args = cmd_args;
+                }
+                let (env, io) = cmd_prefix.into_iter().partition(|r| is_match!(r, &CmdPrefix::Assignment { .. }));
+                SimpleCommand::Cmd {
+                    prog: prog,
+                    args: args,
+                    env: env,
+                    io: io.into_iter().chain(redirect_suffix).collect(),
+                }
+            })
     }
 }
 
@@ -90,17 +112,17 @@ parser! {
     where [
         I: Stream<Item = Token>,
     ] {
-        let if_branch = || compound_list().skip(token(Token::Then)).and(compound_list()).map(|(condition, block)| IfBranch { condition, block });
+        let if_branch = || compound_list().skip(token(Token::Reserved(ReservedWord::THEN))).and(compound_list()).map(|(condition, block)| IfBranch { condition, block });
 
-        token(Token::If)
+        token(Token::Reserved(ReservedWord::IF))
             .with(if_branch())
             .and(
-                many(token(Token::Elif).with(if_branch()))
+                many(token(Token::Reserved(ReservedWord::ELIF)).with(if_branch()))
             )
             .and(
-                optional(token(Token::Else).with(compound_list()))
+                optional(token(Token::Reserved(ReservedWord::ELSE)).with(compound_list()))
             )
-            .skip(token(Token::Fi))
+            .skip(token(Token::Reserved(ReservedWord::FI)))
             .map(|((if_part, mut elif_parts), else_block): ((IfBranch, Vec<IfBranch>), Option<Vec<Statement>>)| {
                 let mut branches = vec![if_part];
                 branches.append(&mut elif_parts);
@@ -109,6 +131,30 @@ parser! {
                     else_block: else_block.map(Box::new),
                 }
             })
+    }
+}
+
+parser! {
+    fn brace_group[I]()(I) -> CompoundCommand
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        token(Token::Reserved(ReservedWord::LBRACE))
+            .with(compound_list())
+            .skip(token(Token::Reserved(ReservedWord::RBRACE)))
+            .map(CompoundCommand::BraceGroup)
+    }
+}
+
+parser! {
+    fn sub_shell[I]()(I) -> CompoundCommand
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        token(Token::LPAREN)
+            .with(compound_list())
+            .skip(token(Token::RPAREN))
+            .map(CompoundCommand::SubShell)
     }
 }
 
@@ -127,7 +173,11 @@ parser! {
     where [
         I: Stream<Item = Token>,
     ] {
-        if_statement()
+        choice![
+            if_statement(),
+            brace_group(),
+            sub_shell()
+        ]
     }
 }
 
@@ -136,8 +186,8 @@ parser! {
     where [
         I: Stream<Item = Token>,
     ] {
-        simple_command().map(|cmd| Command::SimpleCommand(cmd))
-            .or(compound_command().and(many(io_redirect())).map(|(cmd, redirs)| Command::CompoundCommand(cmd, redirs)))
+        compound_command().and(many(io_redirect())).map(|(cmd, redirs)| Command::CompoundCommand(cmd, redirs))
+            .or(simple_command().map(|cmd| Command::SimpleCommand(cmd)))
             .expected("command")
     }
 }
@@ -148,7 +198,7 @@ parser! {
         I: Stream<Item = Token>,
     ] {
         let cmd_chain = command().map(|op| vec![op]);
-        let pipe = token(Token::Pipe).map(|_t| {
+        let pipe = token(Token::PIPE).map(|_t| {
             return |mut lhs: Vec<Command>, mut rhs: Vec<Command>| {
                 // Remove the first argument so we can distinguish it as the command name
                 lhs.push(rhs.remove(0));
@@ -201,7 +251,7 @@ parser! {
     where [
         I: Stream<Item = Token>,
     ] {
-        skip_many1(token(Token::LineBreak))
+        skip_many1(token(Token::LINEBREAK))
     }
 }
 
@@ -210,7 +260,7 @@ parser! {
     where [
         I: Stream<Item = Token>,
     ] {
-        skip_many(token(Token::LineBreak))
+        skip_many(token(Token::LINEBREAK))
     }
 }
 
@@ -225,7 +275,7 @@ fn join_and_or_statements(
     ),
 ) -> Vec<Statement> {
     if let Some(sep) = sep_opt {
-        if sep == Token::Async {
+        if sep == Token::ASYNC {
             let inner = match and_or.pop().unwrap() {
                 Statement::Seq(inner) => inner,
                 _ => unreachable!(),
@@ -278,7 +328,7 @@ parser! {
     where [
         I: Stream<Item = Token>,
     ] {
-        token(Token::Semi).or(token(Token::Async))
+        token(Token::SEMI).or(token(Token::ASYNC))
     }
 }
 
@@ -287,7 +337,7 @@ parser! {
     where [
         I: Stream<Item = Token>,
     ] {
-        separator_op().or(token(Token::LineBreak)).skip(linebreak())
+        separator_op().or(token(Token::LINEBREAK)).skip(linebreak())
     }
 }
 

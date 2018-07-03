@@ -1,11 +1,32 @@
 use std::fmt::{Display, Error, Formatter};
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum ReservedWord {
+    IF,
+    THEN,
+    ELSE,
+    ELIF,
+    FI,
+    DO,
+    DONE,
+    CASE,
+    ESAC,
+    WHILE,
+    UNTIL,
+    FOR,
+    LBRACE,
+    RBRACE,
+    BANG,
+    IN,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Token {
     Word(String),
+    Reserved(ReservedWord),
     IONumber(i32),
 
-    LineBreak,
+    LINEBREAK,
 
     // Operators
     LESS,
@@ -23,17 +44,13 @@ pub enum Token {
     OR,
     DSEMI,
 
-    // Keywords
-    If,
-    Then,
-    Else,
-    Elif,
-    Fi,
+    LPAREN,
+    RPAREN,
 
     // Non-operator special symbols
-    Semi,
-    Async,
-    Pipe,
+    SEMI,
+    ASYNC,
+    PIPE,
 }
 
 impl Token {
@@ -57,7 +74,11 @@ impl Display for Token {
                     s = format!("fd '{}'", i);
                     s.as_str()
                 }
-                Token::LineBreak => "\\n",
+                Token::Reserved(r) => {
+                    s = format!("{}", r);
+                    s.as_str()
+                }
+                Token::LINEBREAK => "\\n",
                 Token::LESS => "<",
                 Token::DLESS => "<<",
                 Token::DLESSDASH => "<<-",
@@ -70,14 +91,38 @@ impl Display for Token {
                 Token::AND => "&&",
                 Token::OR => "||",
                 Token::DSEMI => ";;",
-                Token::If => "if",
-                Token::Then => "then",
-                Token::Else => "else",
-                Token::Elif => "elif",
-                Token::Fi => "fi",
-                Token::Semi => ";",
-                Token::Async => "&",
-                Token::Pipe => "|",
+                Token::SEMI => ";",
+                Token::ASYNC => "&",
+                Token::PIPE => "|",
+                Token::LPAREN => "(",
+                Token::RPAREN => ")",
+            }
+        )
+    }
+}
+
+impl Display for ReservedWord {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        write!(
+            f,
+            "{}",
+            match self {
+                ReservedWord::IF => "if",
+                ReservedWord::THEN => "then",
+                ReservedWord::ELSE => "else",
+                ReservedWord::ELIF => "elif",
+                ReservedWord::FI => "fi",
+                ReservedWord::DO => "do",
+                ReservedWord::DONE => "done",
+                ReservedWord::CASE => "case",
+                ReservedWord::ESAC => "esac",
+                ReservedWord::WHILE => "while",
+                ReservedWord::UNTIL => "until",
+                ReservedWord::FOR => "for",
+                ReservedWord::LBRACE => "{",
+                ReservedWord::RBRACE => "}",
+                ReservedWord::BANG => "!",
+                ReservedWord::IN => "in",
             }
         )
     }
