@@ -20,7 +20,7 @@ impl UserEnv {
             .unwrap_or_else(|| env::var(var.as_ref()).unwrap_or(String::new()))
     }
 
-    pub fn set<S: AsRef<str>>(&mut self, var: S, value: S) {
+    pub fn set<S: AsRef<str>, T: AsRef<str>>(&mut self, var: S, value: T) {
         self.vars
             .insert(var.as_ref().to_owned(), value.as_ref().to_owned());
     }

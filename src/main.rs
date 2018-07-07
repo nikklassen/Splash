@@ -1,3 +1,4 @@
+#![recursion_limit = "100"]
 #[macro_use]
 extern crate combine;
 extern crate getopts;

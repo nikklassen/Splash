@@ -1,6 +1,7 @@
 use super::ast::*;
 use super::token::{self, ReservedWord, Token};
-use combine::easy;
+use combine::error::*;
+use combine::stream::*;
 use combine::*;
 
 parser! {
@@ -297,18 +298,8 @@ term             : term separator and_or
                  |                and_or
                  ;
 */
-fn compound_list<'a, I: 'a>(
-) -> Box<Parser<Input = I, Output = Vec<Statement>, PartialState = ()> + 'a>
-where
-    I: Stream<Item = Token>,
-    I::Error: ParseError<I::Item, I::Range, I::Position>,
-{
-    // This may be a bug in combine, for now just doing something that works
-    compound_list_inner().boxed()
-}
-
 parser! {
-    fn compound_list_inner[I]()(I) -> Vec<Statement>
+    fn compound_list[I]()(I) -> Vec<Statement>
     where [
         I: Stream<Item = Token>,
     ] {
@@ -399,16 +390,28 @@ parser! {
     }
 }
 
-pub fn parse(tokens: Vec<Token>, heredocs: &mut Vec<String>) -> Result<Vec<Statement>, String> {
-    let input = easy::Stream(&tokens[..]);
-    let parse_result = program().easy_parse(input).map_err(|e| format!("{:?}", e))?;
+#[derive(Debug)]
+pub enum ProgramParseResult {
+    Partial,
+    Success(Vec<Statement>),
+    Error(String),
+}
 
-    // TODO handle partial input
-    let result = parse_result.0;
-    let script = if let Some(script) = result {
-        script
-    } else {
-        return Ok(vec![]);
+pub fn parse(tokens: Vec<Token>, heredocs: &mut Vec<String>) -> ProgramParseResult {
+    let parse_result = program().easy_parse(&tokens[..]).map_err(|err| {
+        if err.is_unexpected_end_of_input() {
+            return ProgramParseResult::Partial;
+        }
+        let err = err
+            .map_range(|r| format!("{:?}", r))
+            .map_position(|p| p.translate_position(&tokens[..]));
+        ProgramParseResult::Error(format!("{}\nIn input: `{:?}`", err, tokens))
+    });
+
+    let script: Vec<Statement> = match parse_result {
+        Ok((None, _)) => return ProgramParseResult::Success(vec![]),
+        Ok((Some(script), _)) => script,
+        Err(e) => return e,
     };
 
     fn populate_heredocs(pipeline: &mut Pipeline, heredocs: &mut Vec<String>) {
@@ -452,7 +455,7 @@ pub fn parse(tokens: Vec<Token>, heredocs: &mut Vec<String>) -> Result<Vec<State
             cmd_list_elem
         })
         .collect::<Vec<_>>();
-    Ok(populated)
+    ProgramParseResult::Success(populated)
 }
 
 #[cfg(test)]
@@ -473,10 +476,18 @@ mod tests {
         s.to_string()
     }
 
+    fn unwrap_parse_result(p: ProgramParseResult) -> Vec<Statement> {
+        match p {
+            ProgramParseResult::Success(r) => r,
+            ProgramParseResult::Partial => panic!("Unexpected partial result"),
+            ProgramParseResult::Error(e) => panic!(format!("Unexpected parse error {}", e)),
+        }
+    }
+
     #[test]
     fn parse_cmd_no_args() {
         let input = tokenize("cmd", false).0;
-        let cmd = parse(input, &mut vec![]).unwrap();
+        let cmd = unwrap_parse_result(parse(input, &mut vec![]));
         assert_eq!(
             cmd,
             to_script(SimpleCommand::Cmd {
@@ -491,7 +502,7 @@ mod tests {
     #[test]
     fn parse_cmd_multiple_args() {
         let input = tokenize("cmd argA argB", false).0;
-        let cmd = parse(input, &mut vec![]).unwrap();
+        let cmd = unwrap_parse_result(parse(input, &mut vec![]));
         assert_eq!(
             cmd,
             to_script(SimpleCommand::Cmd {
@@ -506,7 +517,7 @@ mod tests {
     #[test]
     fn parse_cmd_with_string_arg() {
         let input = tokenize(r#"cmd "argA $VAR argB""#, false).0;
-        let cmd = parse(input, &mut vec![]).unwrap();
+        let cmd = unwrap_parse_result(parse(input, &mut vec![]));
         assert_eq!(
             cmd,
             to_script(SimpleCommand::Cmd {
@@ -521,7 +532,7 @@ mod tests {
     #[test]
     fn parse_cmd_with_connected_args() {
         let input = tokenize(r#"cmd argA"argB argC"$TEST'argD argE'"#, false).0;
-        let cmd = parse(input, &mut vec![]).unwrap();
+        let cmd = unwrap_parse_result(parse(input, &mut vec![]));
         assert_eq!(
             cmd,
             to_script(SimpleCommand::Cmd {
@@ -536,7 +547,7 @@ mod tests {
     #[test]
     fn parse_eql_stmt() {
         let input = tokenize("FOO=bar", false).0;
-        let cmd = parse(input, &mut vec![]).unwrap();
+        let cmd = unwrap_parse_result(parse(input, &mut vec![]));
         assert_eq!(
             cmd,
             to_script(SimpleCommand::Cmd {
@@ -554,7 +565,7 @@ mod tests {
     #[test]
     fn parse_eql_trailing_arg() {
         let input = tokenize("FOO=bar baz", false).0;
-        let cmd = parse(input, &mut vec![]).unwrap();
+        let cmd = unwrap_parse_result(parse(input, &mut vec![]));
         assert_eq!(
             cmd,
             to_script(SimpleCommand::Cmd {
@@ -572,7 +583,7 @@ mod tests {
     #[test]
     fn parse_pipe() {
         let input = tokenize("cmdA | cmdB arg", false).0;
-        let cmd = parse(input, &mut vec![]).unwrap();
+        let cmd = unwrap_parse_result(parse(input, &mut vec![]));
         assert_eq!(
             cmd,
             vec![Statement::Seq(AndOrList::Pipeline(Pipeline {
@@ -598,7 +609,7 @@ mod tests {
     #[test]
     fn parse_redir_out() {
         let input = tokenize("cmd > file.txt >> log.txt 2>&1", false).0;
-        let cmd = parse(input, &mut vec![]).unwrap();
+        let cmd = unwrap_parse_result(parse(input, &mut vec![]));
         let write_flags = OFlag::O_WRONLY | OFlag::O_CREAT;
         let trunc_flags = write_flags | OFlag::O_TRUNC;
         let append_flags = write_flags | OFlag::O_APPEND;
@@ -629,7 +640,7 @@ mod tests {
     #[test]
     fn parse_redir_in() {
         let input = tokenize("cmd < file.txt <&3", false).0;
-        let cmd = parse(input, &mut vec![]).unwrap();
+        let cmd = unwrap_parse_result(parse(input, &mut vec![]));
         let read_flags = OFlag::O_RDONLY;
         assert_eq!(
             cmd,
@@ -654,7 +665,7 @@ mod tests {
     #[test]
     fn parse_redir_prefix() {
         let input = tokenize("> file.txt cmd", false).0;
-        let cmd = parse(input, &mut vec![]).unwrap();
+        let cmd = unwrap_parse_result(parse(input, &mut vec![]));
         let write_flags = OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC;
         assert_eq!(
             cmd,
@@ -674,7 +685,7 @@ mod tests {
     fn populate_heredocs() {
         let input = tokenize("cmd <<EOF", false).0;
         let contents: String = "contents".into();
-        let cmd = parse(input, &mut vec![contents.clone()]).unwrap();
+        let cmd = unwrap_parse_result(parse(input, &mut vec![contents.clone()]));
         assert_eq!(
             cmd,
             to_script(SimpleCommand::Cmd {
@@ -692,7 +703,7 @@ mod tests {
     #[test]
     fn async_command() {
         let input = tokenize("cmd &", false).0;
-        let cmd = parse(input, &mut vec![]).unwrap();
+        let cmd = unwrap_parse_result(parse(input, &mut vec![]));
 
         assert_eq!(
             cmd,
@@ -711,7 +722,7 @@ mod tests {
     #[test]
     fn semi_separated() {
         let input = tokenize("cmdA; cmdB", false).0;
-        let cmd = parse(input, &mut vec![]).unwrap();
+        let cmd = unwrap_parse_result(parse(input, &mut vec![]));
 
         assert_eq!(
             cmd,
@@ -741,7 +752,7 @@ mod tests {
     #[test]
     fn bare_if() {
         let input = tokenize("if true; then :; fi", false).0;
-        let cmd = parse(input, &mut vec![]).unwrap();
+        let cmd = unwrap_parse_result(parse(input, &mut vec![]));
 
         assert_eq!(
             cmd,
@@ -789,8 +800,6 @@ mod tests {
             false,
         ).0;
         let cmd = parse(input, &mut vec![]);
-
-        println!("{:?}", cmd);
-        assert!(cmd.is_ok());
+        let _ = unwrap_parse_result(cmd);
     }
 }

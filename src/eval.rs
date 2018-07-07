@@ -5,8 +5,9 @@ use libc::{STDIN_FILENO, STDOUT_FILENO};
 use nix::unistd::{self, Pid};
 
 use input::ast::*;
+use input::parser::{self, ProgramParseResult};
 use input::token::*;
-use input::{parser, prompt, tokenizer};
+use input::{prompt, tokenizer};
 use job;
 use options;
 use process::{self, CommandResult, Process};
@@ -64,7 +65,6 @@ pub fn eval(mut input_reader: InputReader, mut state: ShellState) {
             line.push('\n');
             continue;
         }
-        line = String::new();
 
         let mut input: Vec<String> = Vec::new();
         let mut here_docs: Vec<(Token, String)> = Vec::new();
@@ -110,14 +110,23 @@ pub fn eval(mut input_reader: InputReader, mut state: ShellState) {
             }
         }
 
-        let parsed = parser::parse(tokens, &mut input);
-
-        if let Err(e) = parsed {
-            print_err!("{}", e);
-            continue;
+        let commands;
+        match parser::parse(tokens, &mut input) {
+            ProgramParseResult::Success(result) => {
+                line = String::new();
+                commands = result;
+            }
+            ProgramParseResult::Partial => {
+                line.push_str("\n");
+                continue;
+            }
+            ProgramParseResult::Error(e) => {
+                print_err!("{}", e);
+                line = String::new();
+                continue;
+            }
         }
 
-        let commands = parsed.unwrap();
         if commands.is_empty() {
             continue;
         }
