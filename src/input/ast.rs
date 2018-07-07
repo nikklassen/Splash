@@ -46,11 +46,14 @@ pub enum CompoundCommand {
     },
     SubShell(Vec<Statement>),
     BraceGroup(Vec<Statement>),
-    // TODO
-    // For
-    // Case
-    // While
-    // Until
+    For {
+        var: String,
+        list: Vec<String>,
+        body: Vec<Statement>,
+    }, // TODO
+       // Case
+       // While
+       // Until
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

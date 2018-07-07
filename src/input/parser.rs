@@ -159,6 +159,45 @@ parser! {
     }
 }
 
+parser! {
+    fn do_group[I]()(I) -> Vec<Statement>
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        token(Token::Reserved(ReservedWord::DO))
+            .with(compound_list())
+            .skip(token(Token::Reserved(ReservedWord::DONE)))
+    }
+}
+
+/*
+for_clause : For name                                      do_group
+           | For name                       sequential_sep do_group
+           | For name linebreak in          sequential_sep do_group
+           | For name linebreak in wordlist sequential_sep do_group
+           ;
+*/
+parser! {
+    fn for_clause[I]()(I) -> CompoundCommand
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        token(Token::Reserved(ReservedWord::FOR))
+            .with(word())
+            .and(
+                token(Token::Reserved(ReservedWord::IN))
+                    .with(many(word()))
+                    .or(value(vec!["$@".to_string()])))
+            .skip(optional(sequential_sep()))
+            .and(do_group())
+            .map(|((var, list), body)| CompoundCommand::For {
+                var,
+                list,
+                body,
+            })
+    }
+}
+
 /*
 compound_command : brace_group
                  | subshell
@@ -176,6 +215,7 @@ parser! {
     ] {
         choice![
             if_statement(),
+            for_clause(),
             brace_group(),
             sub_shell()
         ]
@@ -262,6 +302,22 @@ parser! {
         I: Stream<Item = Token>,
     ] {
         skip_many(token(Token::LINEBREAK))
+    }
+}
+
+/*
+sequential_sep   : ';' linebreak
+                 | newline_list
+                 ;
+*/
+parser! {
+    fn sequential_sep[I]()(I) -> ()
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        token(Token::SEMI)
+            .with(linebreak())
+            .or(newline_list())
     }
 }
 

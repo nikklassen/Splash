@@ -8,6 +8,7 @@ use input::ast::*;
 use input::parser::{self, ProgramParseResult};
 use input::token::*;
 use input::{prompt, tokenizer};
+use interpolate;
 use job;
 use options;
 use process::{self, CommandResult, Process};
@@ -131,8 +132,8 @@ pub fn eval(mut input_reader: InputReader, mut state: ShellState) {
             continue;
         }
 
-        for command in commands {
-            let res = run_statement(&mut state, command);
+        for mut command in commands {
+            let res = run_statement(&mut state, &mut command);
             match res {
                 Err(e) => {
                     print_err!("{}", e);
@@ -147,24 +148,24 @@ pub fn eval(mut input_reader: InputReader, mut state: ShellState) {
     ::std::process::exit(last_status);
 }
 
-fn run_statement(state: &mut ShellState, statement: Statement) -> Result<i32, String> {
+fn run_statement(state: &mut ShellState, statement: &mut Statement) -> Result<i32, String> {
     match statement {
-        Statement::Async(and_or) => run_and_or(state, and_or, true),
-        Statement::Seq(and_or) => run_and_or(state, and_or, false),
+        Statement::Async(ref mut and_or) => run_and_or(state, and_or, true),
+        Statement::Seq(ref mut and_or) => run_and_or(state, and_or, false),
     }
 }
 
-fn run_and_or(state: &mut ShellState, list: AndOrList, async: bool) -> Result<i32, String> {
+fn run_and_or(state: &mut ShellState, list: &mut AndOrList, async: bool) -> Result<i32, String> {
     let pipeline = match list {
-        AndOrList::And(prev, p) => {
-            let status = run_and_or(state, *prev, false)?;
+        AndOrList::And(ref mut prev, p) => {
+            let status = run_and_or(state, prev, false)?;
             if status != 0 {
                 return Ok(status);
             }
             p
         }
-        AndOrList::Or(prev, p) => {
-            let status = run_and_or(state, *prev, false)?;
+        AndOrList::Or(ref mut prev, p) => {
+            let status = run_and_or(state, prev, false)?;
             if status == 0 {
                 return Ok(status);
             }
@@ -177,7 +178,7 @@ fn run_and_or(state: &mut ShellState, list: AndOrList, async: bool) -> Result<i3
 
 fn run_pipeline(
     state: &mut ShellState,
-    mut pipeline: Pipeline,
+    pipeline: &mut Pipeline,
     async: bool,
 ) -> Result<i32, String> {
     let num_procs = pipeline.cmds.len();
@@ -194,21 +195,17 @@ fn run_pipeline(
     }
 
     let mut pgid = Pid::from_raw(0);
+    let mut cmds = pipeline.cmds.iter_mut();
     // TODO all threads need to be spawned then the last waited for
     // the all others subsequently killed if not done
     for _ in 0..(num_procs - 1) {
-        let cmd = pipeline.cmds.remove(0);
+        let mut cmd = cmds.next().unwrap();
         let CommandResult(proc, _builtin_result) = run_command(state, cmd, pgid, false)?;
         pgid = proc.pgid;
     }
 
-    let mut last_cmd = pipeline.cmds.remove(0);
-    add_piped_io_to_command(
-        &mut last_cmd,
-        prev_pipe_out,
-        Redir::Copy(STDOUT_FILENO),
-        multi,
-    );
+    let last_cmd = cmds.next().unwrap();
+    add_piped_io_to_command(last_cmd, prev_pipe_out, Redir::Copy(STDOUT_FILENO), multi);
 
     let CommandResult(last_proc, builtin_result) = run_command(state, last_cmd, pgid, async)?;
 
@@ -268,7 +265,7 @@ fn add_piped_io_to_command(cmd: &mut Command, pipe_in: Redir, pipe_out: Redir, m
 
 fn run_command(
     state: &mut ShellState,
-    cmd: Command,
+    cmd: &mut Command,
     pgid: Pid,
     async: bool,
 ) -> Result<CommandResult, String> {
@@ -282,14 +279,14 @@ fn run_command(
 
 fn run_simple_command(
     state: &mut ShellState,
-    cmd: SimpleCommand,
+    cmd: &mut SimpleCommand,
     pgid: Pid,
     async: bool,
 ) -> Result<CommandResult, String> {
     process::exec_cmd(state, cmd, pgid, async)
 }
 
-fn run_statements(state: &mut ShellState, statements: Vec<Statement>) -> Result<i32, String> {
+fn run_statements(state: &mut ShellState, statements: &mut Vec<Statement>) -> Result<i32, String> {
     let mut last_result = 0;
     for statement in statements {
         last_result = run_statement(state, statement)?;
@@ -299,9 +296,9 @@ fn run_statements(state: &mut ShellState, statements: Vec<Statement>) -> Result<
 
 fn run_compound_command(
     state: &mut ShellState,
-    cmd: CompoundCommand,
+    cmd: &mut CompoundCommand,
     // TODO
-    _redirs: Vec<CmdPrefix>,
+    _redirs: &Vec<CmdPrefix>,
     _async: bool,
 ) -> Result<CommandResult, String> {
     let wrap_result = |cmd_name: &str, result: i32| {
@@ -332,7 +329,7 @@ fn run_compound_command(
             }
             if !has_branched {
                 if let Some(block) = else_block {
-                    last_result = run_statements(state, *block)?;
+                    last_result = run_statements(state, block)?;
                 }
             }
             wrap_result("if", last_result)
@@ -345,6 +342,21 @@ fn run_compound_command(
             let mut new_state = ShellState::from(state);
             let last_result = run_statements(&mut new_state, block)?;
             wrap_result("( .. )", last_result)
+        }
+        CompoundCommand::For {
+            ref var,
+            ref list,
+            ref mut body,
+        } => {
+            let mut last_result = 0;
+            for elem in list {
+                let items = interpolate::expand_word(&elem, &state.env, false)?;
+                for item in items {
+                    state.env.set(var, item);
+                    last_result = run_statements(state, body)?;
+                }
+            }
+            wrap_result("for", last_result)
         }
     }
 }

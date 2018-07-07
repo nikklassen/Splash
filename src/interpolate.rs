@@ -257,7 +257,7 @@ fn quote_removal(word: &String) -> String {
         .collect()
 }
 
-fn expand_word(
+pub fn expand_word(
     word: &String,
     user_env: &UserEnv,
     is_assignment: bool,

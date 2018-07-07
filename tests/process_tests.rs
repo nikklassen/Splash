@@ -324,3 +324,17 @@ fn subshell_pwd() {
     assert_eq!(result.status, 0);
     assert_eq!(result.stdout.trim(), env::var("PWD").unwrap());
 }
+
+#[test]
+fn for_full() {
+    let result = run_in_splash(
+        r#"
+    for x in 1 2 3
+    do
+        echo $x
+    done
+    "#,
+    );
+    assert_eq!(result.status, 0);
+    assert_eq!(result.stdout, "1\n2\n3\n");
+}

@@ -100,7 +100,7 @@ impl fmt::Display for Process {
 
 pub fn exec_cmd(
     state: &mut ShellState,
-    cmd: SimpleCommand,
+    cmd: &mut SimpleCommand,
     pgid: Pid,
     async: bool,
 ) -> Result<CommandResult, String> {
@@ -110,7 +110,7 @@ pub fn exec_cmd(
             args,
             io,
             env,
-        } => Process::new(prog, args, env, io),
+        } => Process::new(prog.clone(), args.clone(), env.clone(), io.clone()),
         _ => unreachable!(),
     };
     proc.async = async;

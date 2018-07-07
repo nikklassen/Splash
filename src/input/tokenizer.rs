@@ -54,8 +54,17 @@ pub fn tokenize(input: &str, delimited: bool) -> (Vec<Token>, bool) {
         "then" => ReservedWord::THEN,
         "else" => ReservedWord::ELSE,
         "fi" => ReservedWord::FI,
+        "do" => ReservedWord::DO,
+        "done" => ReservedWord::DONE,
+        "case" => ReservedWord::CASE,
+        "esac" => ReservedWord::ESAC,
+        "while" => ReservedWord::WHILE,
+        "until" => ReservedWord::UNTIL,
+        "for" => ReservedWord::FOR,
         "{" => ReservedWord::LBRACE,
         "}" => ReservedWord::RBRACE,
+        "!" => ReservedWord::BANG,
+        "in" => ReservedWord::IN,
     };
 
     let mut chars = input.chars().peekable();
