@@ -58,7 +58,13 @@ fn run_command(input: &str) -> String {
 }
 
 fn split_fields(word: &String, user_env: &UserEnv) -> Vec<String> {
-    let ifs = user_env.get("IFS");
+    let mut ifs = user_env.get("IFS");
+    if ifs == " " || ifs == "\n" || ifs == "\t" || !user_env.is_set("IFS") {
+        ifs = String::from(" \n\t");
+    } else if ifs == "" {
+        return vec![word.to_owned()];
+    }
+
     word.split(|c| ifs.contains(c))
         .filter(|s| s.len() > 0)
         .map(str::to_owned)

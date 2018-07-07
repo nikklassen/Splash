@@ -24,4 +24,8 @@ impl UserEnv {
         self.vars
             .insert(var.as_ref().to_owned(), value.as_ref().to_owned());
     }
+
+    pub fn is_set<S: AsRef<str>>(&self, var: S) -> bool {
+        self.vars.contains_key(var.as_ref()) || env::var(var.as_ref()).is_ok()
+    }
 }
