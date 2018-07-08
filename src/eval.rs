@@ -350,7 +350,7 @@ fn run_compound_command(
         } => {
             let mut last_result = 0;
             for elem in list {
-                let items = interpolate::expand_word(&elem, &state.env, false)?;
+                let items = interpolate::expand_word(&elem, &mut state.env, false)?;
                 for item in items {
                     state.env.set(var, item);
                     last_result = run_statements(state, body)?;

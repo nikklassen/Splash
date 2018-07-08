@@ -7,6 +7,7 @@ use nix::unistd::{self, ForkResult};
 
 use env::UserEnv;
 use eval::{self, InputReader};
+use expression;
 use file::Fd;
 use input::ast::*;
 use input::token::Token;
@@ -71,9 +72,29 @@ fn split_fields(word: &String, user_env: &UserEnv) -> Vec<String> {
         .collect()
 }
 
+fn expand_arith(
+    to_eval: &str,
+    user_env: &mut UserEnv,
+    is_assignment: bool,
+) -> Result<String, String> {
+    let mut expanded = String::new();
+    for word in to_eval.split(" ") {
+        let expanded_words = expand_word(&word.to_string(), user_env, is_assignment)?;
+        for expanded_word in expanded_words {
+            expanded.push_str(&expanded_word);
+            expanded.push(' ');
+        }
+        expanded.push(' ');
+    }
+
+    let expr = expression::parser::parse(&expanded)?;
+    let expr_result = expression::eval::eval(&expr, user_env);
+    Ok(format!("{}", expr_result))
+}
+
 fn parameter_expansion(
     t: &String,
-    user_env: &UserEnv,
+    user_env: &mut UserEnv,
     is_assignment: bool,
 ) -> Result<Vec<String>, String> {
     let mut s = String::new();
@@ -138,8 +159,8 @@ fn parameter_expansion(
 
             let _ = chars.by_ref().skip(to_expand.len()).collect::<String>();
             result = if to_expand.starts_with(&"$((") {
-                // TODO arithmetic
-                String::new()
+                let to_eval = &to_expand[3..to_expand.len() - 2];
+                expand_arith(to_eval, user_env, is_assignment)?
             } else if to_expand.starts_with(&"$(") {
                 let input = &to_expand[2..to_expand.len() - 1];
                 run_command(input)
@@ -265,7 +286,7 @@ fn quote_removal(word: &String) -> String {
 
 pub fn expand_word(
     word: &String,
-    user_env: &UserEnv,
+    user_env: &mut UserEnv,
     is_assignment: bool,
 ) -> Result<Vec<String>, String> {
     let s = tilde_expansion(&word, is_assignment)?;
@@ -274,7 +295,7 @@ pub fn expand_word(
     Ok(words)
 }
 
-pub fn expand(p: &mut Process, user_env: &UserEnv) -> Result<(), String> {
+pub fn expand(p: &mut Process, user_env: &mut UserEnv) -> Result<(), String> {
     let mut new_args = Vec::new();
     if p.prog.is_some() {
         let expanded = expand_word(p.prog.as_ref().unwrap(), user_env, false)?;
@@ -315,8 +336,8 @@ mod tests {
     }
 
     fn expand_basic(s: &String) -> String {
-        let user_env = make_test_env();
-        let mut words = expand_word(s, &user_env, false).unwrap();
+        let mut user_env = make_test_env();
+        let mut words = expand_word(s, &mut user_env, false).unwrap();
         words.remove(0)
     }
 
@@ -384,17 +405,17 @@ mod tests {
 
     #[test]
     fn expand_tilde_err_no_user() {
-        let user_env = make_test_env();
+        let mut user_env = make_test_env();
         let toks = "~unknown/.config".to_string();
-        let word = expand_word(&toks, &user_env, false);
+        let word = expand_word(&toks, &mut user_env, false);
         assert!(word.is_err());
     }
 
     #[test]
     fn expand_tilde_after_semi_assignment() {
-        let user_env = make_test_env();
+        let mut user_env = make_test_env();
         let toks = "a:~".to_string();
-        let words = expand_word(&toks, &user_env, true).unwrap();
+        let words = expand_word(&toks, &mut user_env, true).unwrap();
 
         let home = env::var("HOME").unwrap();
         assert_eq!(words[0], "a:".to_string() + &home);
@@ -402,9 +423,9 @@ mod tests {
 
     #[test]
     fn expand_tilde_after_semi_with_name() {
-        let user_env = make_test_env();
+        let mut user_env = make_test_env();
         let toks = "a:~root:b".to_string();
-        let words = expand_word(&toks, &user_env, true).unwrap();
+        let words = expand_word(&toks, &mut user_env, true).unwrap();
 
         assert_eq!(words[0], "a:/root:b".to_string());
     }
@@ -426,9 +447,9 @@ mod tests {
 
     #[test]
     fn expand_parameter_no_parameter() {
-        let user_env = make_test_env();
+        let mut user_env = make_test_env();
         let toks = "${!}".to_string();
-        let word = expand_word(&toks, &user_env, false);
+        let word = expand_word(&toks, &mut user_env, false);
 
         assert!(word.is_err());
     }
@@ -438,9 +459,28 @@ mod tests {
         let mut user_env = make_test_env();
         user_env.set("0", "A");
         let toks = "$01".to_string();
-        let word = expand_word(&toks, &user_env, false).unwrap();
+        let word = expand_word(&toks, &mut user_env, false).unwrap();
 
         assert_eq!(word[0], "A1".to_string());
+    }
+
+    #[test]
+    fn expand_arith() {
+        let mut user_env = make_test_env();
+        let toks = "$((1 + 1))".to_string();
+        let word = expand_word(&toks, &mut user_env, false).unwrap();
+
+        assert_eq!(&word[0], "2");
+    }
+
+    #[test]
+    fn expand_arith_nested_var() {
+        let mut user_env = make_test_env();
+        user_env.set("a", "1");
+        let toks = "$((1 + $a))".to_string();
+        let word = expand_word(&toks, &mut user_env, false).unwrap();
+
+        assert_eq!(&word[0], "2");
     }
 
     #[test]
@@ -456,7 +496,7 @@ mod tests {
         let mut user_env = make_test_env();
         user_env.set("X", "A           B");
         let toks = "$X".to_string();
-        let words = expand_word(&toks, &user_env, false).unwrap();
+        let words = expand_word(&toks, &mut user_env, false).unwrap();
 
         assert_eq!(words, vec!["A".to_string(), "B".to_string()]);
     }
@@ -467,7 +507,7 @@ mod tests {
         let val = "A  B".to_string();
         user_env.set("A", &val);
         let toks = r#""$A""#.to_string();
-        let words = expand_word(&toks, &user_env, false).unwrap();
+        let words = expand_word(&toks, &mut user_env, false).unwrap();
 
         assert_eq!(words, vec![val]);
     }
@@ -477,7 +517,7 @@ mod tests {
         let mut user_env = make_test_env();
         user_env.set("X", "A           B");
         let mut p = Process::new(Some("$X".to_string()), Vec::new(), Vec::new(), Vec::new());
-        let res = expand(&mut p, &user_env);
+        let res = expand(&mut p, &mut user_env);
 
         assert!(res.is_ok());
         assert_eq!(p.prog, Some("A".to_string()));

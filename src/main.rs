@@ -19,6 +19,7 @@ mod test_fixture;
 pub mod builtin;
 pub mod env;
 mod eval;
+pub mod expression;
 pub mod file;
 pub mod input;
 mod interpolate;
