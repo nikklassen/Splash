@@ -358,5 +358,29 @@ fn run_compound_command(
             }
             wrap_result("for", last_result)
         }
+        CompoundCommand::While {
+            ref mut cond,
+            ref mut body,
+        } => {
+            let mut last_result = 0;
+            let mut cond_result = run_statements(state, cond)?;
+            while cond_result == 0 {
+                last_result = run_statements(state, body)?;
+                cond_result = run_statements(state, cond)?;
+            }
+            wrap_result("while", last_result)
+        }
+        CompoundCommand::Until {
+            ref mut cond,
+            ref mut body,
+        } => {
+            let mut last_result = 0;
+            let mut cond_result = run_statements(state, cond)?;
+            while cond_result != 0 {
+                last_result = run_statements(state, body)?;
+                cond_result = run_statements(state, cond)?;
+            }
+            wrap_result("until", last_result)
+        }
     }
 }

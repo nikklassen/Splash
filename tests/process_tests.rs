@@ -338,3 +338,19 @@ fn for_full() {
     assert_eq!(result.status, 0);
     assert_eq!(result.stdout, "1\n2\n3\n");
 }
+
+#[test]
+fn while_full() {
+    let result = run_in_splash(
+        r#"
+    a=1
+    while [ $(($a < 5)) = "1" ]
+    do
+        echo $a
+        : $((a += 1))
+    done
+    "#,
+    );
+    assert_eq!(result.status, 0);
+    assert_eq!(result.stdout, "1\n2\n3\n4\n");
+}

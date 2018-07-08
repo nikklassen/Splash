@@ -50,10 +50,17 @@ pub enum CompoundCommand {
         var: String,
         list: Vec<String>,
         body: Vec<Statement>,
-    }, // TODO
-       // Case
-       // While
-       // Until
+    },
+    While {
+        cond: Vec<Statement>,
+        body: Vec<Statement>,
+    },
+    Until {
+        cond: Vec<Statement>,
+        body: Vec<Statement>,
+    },
+    // TODO
+    // Case
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -109,7 +109,7 @@ parser! {
 }
 
 parser! {
-    fn if_statement[I]()(I) -> CompoundCommand
+    fn if_clause[I]()(I) -> CompoundCommand
     where [
         I: Stream<Item = Token>,
     ] {
@@ -198,6 +198,36 @@ parser! {
     }
 }
 
+parser! {
+    fn while_clause[I]()(I) -> CompoundCommand
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        token(Token::Reserved(ReservedWord::WHILE))
+            .with(compound_list())
+            .and(do_group())
+            .map(|(cond, body)| CompoundCommand::While {
+                cond,
+                body,
+            })
+    }
+}
+
+parser! {
+    fn until_clause[I]()(I) -> CompoundCommand
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        token(Token::Reserved(ReservedWord::UNTIL))
+            .with(compound_list())
+            .and(do_group())
+            .map(|(cond, body)| CompoundCommand::Until {
+                cond,
+                body,
+            })
+    }
+}
+
 /*
 compound_command : brace_group
                  | subshell
@@ -214,10 +244,12 @@ parser! {
         I: Stream<Item = Token>,
     ] {
         choice![
-            if_statement(),
-            for_clause(),
             brace_group(),
-            sub_shell()
+            sub_shell(),
+            for_clause(),
+            if_clause(),
+            while_clause(),
+            until_clause()
         ]
     }
 }
@@ -856,6 +888,89 @@ mod tests {
             false,
         ).0;
         let cmd = parse(input, &mut vec![]);
+        let _ = unwrap_parse_result(cmd);
+    }
+
+    #[test]
+    fn for_full() {
+        let input = tokenize("for x in 1 2; do :; done", false).0;
+        let cmd = unwrap_parse_result(parse(input, &mut vec![]));
+
+        assert_eq!(
+            cmd,
+            vec![Statement::Seq(AndOrList::Pipeline(Pipeline {
+                cmds: vec![Command::CompoundCommand(
+                    CompoundCommand::For {
+                        var: "x".to_string(),
+                        list: vec!["1".to_string(), "2".to_string()],
+                        body: vec![Statement::Seq(AndOrList::Pipeline(Pipeline {
+                            cmds: vec![Command::SimpleCommand(SimpleCommand::Cmd {
+                                prog: Some(to_word(":")),
+                                args: Vec::new(),
+                                io: Vec::new(),
+                                env: Vec::new(),
+                            })],
+                            bang: false,
+                        }))],
+                    },
+                    Vec::new(),
+                )],
+                bang: false,
+            }))]
+        );
+    }
+
+    #[test]
+    fn for_no_list() {
+        let input = tokenize("for x; do :; done", false).0;
+        let cmd = unwrap_parse_result(parse(input, &mut vec![]));
+
+        assert_eq!(
+            cmd,
+            vec![Statement::Seq(AndOrList::Pipeline(Pipeline {
+                cmds: vec![Command::CompoundCommand(
+                    CompoundCommand::For {
+                        var: "x".to_string(),
+                        list: vec!["$@".to_string()],
+                        body: vec![Statement::Seq(AndOrList::Pipeline(Pipeline {
+                            cmds: vec![Command::SimpleCommand(SimpleCommand::Cmd {
+                                prog: Some(to_word(":")),
+                                args: Vec::new(),
+                                io: Vec::new(),
+                                env: Vec::new(),
+                            })],
+                            bang: false,
+                        }))],
+                    },
+                    Vec::new(),
+                )],
+                bang: false,
+            }))]
+        );
+    }
+
+    #[test]
+    fn for_other() {
+        let mut input = tokenize("for x do :; done", false).0;
+        let mut cmd = parse(input, &mut vec![]);
+
+        let _ = unwrap_parse_result(cmd);
+
+        input = tokenize("for x in; do :; done", false).0;
+        cmd = parse(input, &mut vec![]);
+
+        let _ = unwrap_parse_result(cmd);
+
+        input = tokenize(
+            r#"
+        for x in $a
+        do
+            :
+        done"#,
+            false,
+        ).0;
+        cmd = parse(input, &mut vec![]);
+
         let _ = unwrap_parse_result(cmd);
     }
 }

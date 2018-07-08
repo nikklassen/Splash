@@ -76,8 +76,8 @@ parser! {
     fn bit_shift[I]()(I) -> Expression
     where [I: Stream<Item = char>] {
         let op = choice![
-            string("<<"),
-            string(">>")
+            try(string("<<")),
+            try(string(">>"))
         ];
         chainl1(lex(add_sub()), lex(op).map(|op| binary(op)))
     }
@@ -298,6 +298,32 @@ mod tests {
                     Op::Plus,
                     Box::new(Expression::Num(1))
                 ))
+            )
+        );
+    }
+
+    #[test]
+    fn less() {
+        let r = parse("1 < 2").unwrap();
+        assert_eq!(
+            r,
+            Expression::BinaryExpression(
+                Op::Less,
+                Box::new(Expression::Num(1)),
+                Box::new(Expression::Num(2))
+            )
+        );
+    }
+
+    #[test]
+    fn bit_shift_left() {
+        let r = parse("1 << 2").unwrap();
+        assert_eq!(
+            r,
+            Expression::BinaryExpression(
+                Op::LShift,
+                Box::new(Expression::Num(1)),
+                Box::new(Expression::Num(2))
             )
         );
     }
