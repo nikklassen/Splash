@@ -39,6 +39,12 @@ pub struct IfBranch {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaseItem {
+    pub patterns: Vec<String>,
+    pub body: Vec<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompoundCommand {
     If {
         branches: Vec<IfBranch>,
@@ -59,8 +65,10 @@ pub enum CompoundCommand {
         cond: Vec<Statement>,
         body: Vec<Statement>,
     },
-    // TODO
-    // Case
+    Case {
+        match_var: String,
+        cases: Vec<CaseItem>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

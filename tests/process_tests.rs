@@ -354,3 +354,19 @@ fn while_full() {
     assert_eq!(result.status, 0);
     assert_eq!(result.stdout, "1\n2\n3\n4\n");
 }
+
+#[test]
+fn case_full() {
+    let result = run_in_splash(
+        r#"
+    a=abc
+    b="a*c"
+    case $a in
+        abcd) echo "incorrect" ;;
+        $b) echo "correct" ;;
+    esac
+    "#,
+    );
+    assert_eq!(result.status, 0);
+    assert_eq!(result.stdout, "correct\n");
+}

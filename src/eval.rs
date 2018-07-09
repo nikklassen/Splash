@@ -4,6 +4,7 @@ use std::io::{BufRead, BufReader};
 use libc::{STDIN_FILENO, STDOUT_FILENO};
 use nix::unistd::{self, Pid};
 
+use env::UserEnv;
 use input::ast::*;
 use input::parser::{self, ProgramParseResult};
 use input::token::*;
@@ -11,6 +12,7 @@ use input::{prompt, tokenizer};
 use interpolate;
 use job;
 use options;
+use pattern;
 use process::{self, CommandResult, Process};
 use state::ShellState;
 use util;
@@ -382,5 +384,34 @@ fn run_compound_command(
             }
             wrap_result("until", last_result)
         }
+        CompoundCommand::Case {
+            ref mut match_var,
+            ref mut cases,
+        } => {
+            // Will always be a single value because there is no field splitting
+            let mut match_vars = interpolate::expand_word(&match_var, &mut state.env, false)?;
+            let mut last_result = 0;
+            for case in cases {
+                if is_case_pattern_match(&match_vars[0], &case.patterns, &mut state.env)? {
+                    last_result = run_statements(state, &mut case.body)?;
+                    break;
+                }
+            }
+            wrap_result("case", last_result)
+        }
     }
+}
+
+fn is_case_pattern_match(
+    match_var: &str,
+    patterns: &Vec<String>,
+    user_env: &mut UserEnv,
+) -> Result<bool, String> {
+    for pattern in patterns {
+        let expanded_pattern = interpolate::expand_word(&pattern, user_env, false)?;
+        if pattern::is_match(match_var, &expanded_pattern[0])? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

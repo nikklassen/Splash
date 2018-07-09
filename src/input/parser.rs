@@ -228,6 +228,55 @@ parser! {
     }
 }
 
+parser! {
+    fn case_clause[I]()(I) -> CompoundCommand
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        let case_list = sep_end_by(case_item(), token(Token::DSEMI).skip(linebreak()));
+        token(Token::Reserved(ReservedWord::CASE))
+            .with(word_or_reserved())
+            .skip(linebreak())
+            .skip(token(Token::Reserved(ReservedWord::IN)))
+            .skip(linebreak())
+            .and(case_list)
+            .skip(token(Token::Reserved(ReservedWord::ESAC)))
+            .map(|(match_var, cases)| CompoundCommand::Case {
+                match_var,
+                cases,
+            })
+    }
+}
+
+parser! {
+    fn pattern[I]()(I) -> Vec<String>
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        try(
+            token(Token::Reserved(ReservedWord::ESAC)).skip(unexpected("esac")).map(|_| unreachable!())
+                .or(sep_by1(word_or_reserved(), token(Token::PIPE))))
+    }
+}
+
+parser! {
+    fn case_item[I]()(I) -> CaseItem
+    where [
+        I: Stream<Item = Token>,
+    ] {
+        optional(token(Token::LPAREN))
+            .with(pattern())
+            .skip(token(Token::RPAREN))
+            .and(
+                try(compound_list())
+                    .or(linebreak().map(|_| Vec::new())))
+            .map(|(patterns, body)| CaseItem {
+                patterns,
+                body,
+            })
+    }
+}
+
 /*
 compound_command : brace_group
                  | subshell
@@ -249,7 +298,8 @@ parser! {
             for_clause(),
             if_clause(),
             while_clause(),
-            until_clause()
+            until_clause(),
+            case_clause()
         ]
     }
 }
@@ -972,5 +1022,81 @@ mod tests {
         cmd = parse(input, &mut vec![]);
 
         let _ = unwrap_parse_result(cmd);
+    }
+
+    #[test]
+    fn case_multi_pattern() {
+        let input = tokenize("case a in\na|b) :\nesac", false).0;
+        let cmd = unwrap_parse_result(parse(input, &mut vec![]));
+
+        assert_eq!(
+            cmd,
+            vec![Statement::Seq(AndOrList::Pipeline(Pipeline {
+                cmds: vec![Command::CompoundCommand(
+                    CompoundCommand::Case {
+                        match_var: "a".to_string(),
+                        cases: vec![CaseItem {
+                            patterns: vec!["a".to_string(), "b".to_string()],
+                            body: vec![Statement::Seq(AndOrList::Pipeline(Pipeline {
+                                cmds: vec![Command::SimpleCommand(SimpleCommand::Cmd {
+                                    prog: Some(to_word(":")),
+                                    args: Vec::new(),
+                                    io: Vec::new(),
+                                    env: Vec::new(),
+                                })],
+                                bang: false,
+                            }))],
+                        }],
+                    },
+                    Vec::new(),
+                )],
+                bang: false,
+            }))]
+        );
+    }
+
+    #[test]
+    fn case_multi_case() {
+        let input = tokenize("case a in\na) :;; b) :\nesac", false).0;
+        let cmd = unwrap_parse_result(parse(input, &mut vec![]));
+
+        assert_eq!(
+            cmd,
+            vec![Statement::Seq(AndOrList::Pipeline(Pipeline {
+                cmds: vec![Command::CompoundCommand(
+                    CompoundCommand::Case {
+                        match_var: "a".to_string(),
+                        cases: vec![
+                            CaseItem {
+                                patterns: vec!["a".to_string()],
+                                body: vec![Statement::Seq(AndOrList::Pipeline(Pipeline {
+                                    cmds: vec![Command::SimpleCommand(SimpleCommand::Cmd {
+                                        prog: Some(to_word(":")),
+                                        args: Vec::new(),
+                                        io: Vec::new(),
+                                        env: Vec::new(),
+                                    })],
+                                    bang: false,
+                                }))],
+                            },
+                            CaseItem {
+                                patterns: vec!["b".to_string()],
+                                body: vec![Statement::Seq(AndOrList::Pipeline(Pipeline {
+                                    cmds: vec![Command::SimpleCommand(SimpleCommand::Cmd {
+                                        prog: Some(to_word(":")),
+                                        args: Vec::new(),
+                                        io: Vec::new(),
+                                        env: Vec::new(),
+                                    })],
+                                    bang: false,
+                                }))],
+                            },
+                        ],
+                    },
+                    Vec::new(),
+                )],
+                bang: false,
+            }))]
+        );
     }
 }

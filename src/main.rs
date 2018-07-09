@@ -25,6 +25,7 @@ pub mod input;
 mod interpolate;
 pub mod job;
 pub mod options;
+pub mod pattern;
 pub mod process;
 pub mod signals;
 pub mod state;
