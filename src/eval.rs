@@ -135,7 +135,7 @@ pub fn eval(mut input_reader: InputReader, mut state: ShellState) {
         }
 
         for mut command in commands {
-            let res = run_statement(&mut state, &mut command);
+            let res = run_statement(&mut state, &command);
             match res {
                 Err(e) => {
                     print_err!("{}", e);
@@ -150,23 +150,23 @@ pub fn eval(mut input_reader: InputReader, mut state: ShellState) {
     ::std::process::exit(last_status);
 }
 
-fn run_statement(state: &mut ShellState, statement: &mut Statement) -> Result<i32, String> {
+fn run_statement(state: &mut ShellState, statement: &Statement) -> Result<i32, String> {
     match statement {
-        Statement::Async(ref mut and_or) => run_and_or(state, and_or, true),
-        Statement::Seq(ref mut and_or) => run_and_or(state, and_or, false),
+        Statement::Async(ref and_or) => run_and_or(state, and_or, true),
+        Statement::Seq(ref and_or) => run_and_or(state, and_or, false),
     }
 }
 
-fn run_and_or(state: &mut ShellState, list: &mut AndOrList, async: bool) -> Result<i32, String> {
+fn run_and_or(state: &mut ShellState, list: &AndOrList, async: bool) -> Result<i32, String> {
     let pipeline = match list {
-        AndOrList::And(ref mut prev, p) => {
+        AndOrList::And(ref prev, p) => {
             let status = run_and_or(state, prev, false)?;
             if status != 0 {
                 return Ok(status);
             }
             p
         }
-        AndOrList::Or(ref mut prev, p) => {
+        AndOrList::Or(ref prev, p) => {
             let status = run_and_or(state, prev, false)?;
             if status == 0 {
                 return Ok(status);
@@ -178,17 +178,14 @@ fn run_and_or(state: &mut ShellState, list: &mut AndOrList, async: bool) -> Resu
     run_pipeline(state, pipeline, async)
 }
 
-fn run_pipeline(
-    state: &mut ShellState,
-    pipeline: &mut Pipeline,
-    async: bool,
-) -> Result<i32, String> {
+fn run_pipeline(state: &mut ShellState, pipeline: &Pipeline, async: bool) -> Result<i32, String> {
     let num_procs = pipeline.cmds.len();
     let mut prev_pipe_out = Redir::Copy(STDIN_FILENO);
+    let mut cmds = pipeline.cmds.iter().cloned().collect::<Vec<_>>();
 
     let multi = num_procs > 1;
     for i in 0..(num_procs - 1) {
-        let p = &mut pipeline.cmds[i];
+        let p = &mut cmds[i];
         let (pipe_out, pipe_in) = unistd::pipe().or_else(util::show_err)?;
 
         add_piped_io_to_command(p, prev_pipe_out, Redir::Pipe(pipe_in), multi);
@@ -197,19 +194,23 @@ fn run_pipeline(
     }
 
     let mut pgid = Pid::from_raw(0);
-    let mut cmds = pipeline.cmds.iter_mut();
     // TODO all threads need to be spawned then the last waited for
     // the all others subsequently killed if not done
     for _ in 0..(num_procs - 1) {
-        let mut cmd = cmds.next().unwrap();
-        let CommandResult(proc, _builtin_result) = run_command(state, cmd, pgid, false)?;
+        let mut cmd = cmds.remove(0);
+        let CommandResult(proc, _builtin_result) = run_command(state, &cmd, pgid, false)?;
         pgid = proc.pgid;
     }
 
-    let last_cmd = cmds.next().unwrap();
-    add_piped_io_to_command(last_cmd, prev_pipe_out, Redir::Copy(STDOUT_FILENO), multi);
+    let mut last_cmd = cmds.remove(0);
+    add_piped_io_to_command(
+        &mut last_cmd,
+        prev_pipe_out,
+        Redir::Copy(STDOUT_FILENO),
+        multi,
+    );
 
-    let CommandResult(last_proc, builtin_result) = run_command(state, last_cmd, pgid, async)?;
+    let CommandResult(last_proc, builtin_result) = run_command(state, &mut last_cmd, pgid, async)?;
 
     let ret;
     {
@@ -267,7 +268,7 @@ fn add_piped_io_to_command(cmd: &mut Command, pipe_in: Redir, pipe_out: Redir, m
 
 fn run_command(
     state: &mut ShellState,
-    cmd: &mut Command,
+    cmd: &Command,
     pgid: Pid,
     async: bool,
 ) -> Result<CommandResult, String> {
@@ -281,14 +282,14 @@ fn run_command(
 
 fn run_simple_command(
     state: &mut ShellState,
-    cmd: &mut SimpleCommand,
+    cmd: &SimpleCommand,
     pgid: Pid,
     async: bool,
 ) -> Result<CommandResult, String> {
     process::exec_cmd(state, cmd, pgid, async)
 }
 
-fn run_statements(state: &mut ShellState, statements: &mut Vec<Statement>) -> Result<i32, String> {
+fn run_statements(state: &mut ShellState, statements: &Vec<Statement>) -> Result<i32, String> {
     let mut last_result = 0;
     for statement in statements {
         last_result = run_statement(state, statement)?;
@@ -298,7 +299,7 @@ fn run_statements(state: &mut ShellState, statements: &mut Vec<Statement>) -> Re
 
 fn run_compound_command(
     state: &mut ShellState,
-    cmd: &mut CompoundCommand,
+    cmd: &CompoundCommand,
     // TODO
     _redirs: &Vec<CmdPrefix>,
     _async: bool,
@@ -348,7 +349,7 @@ fn run_compound_command(
         CompoundCommand::For {
             ref var,
             ref list,
-            ref mut body,
+            ref body,
         } => {
             let mut last_result = 0;
             for elem in list {
@@ -360,10 +361,7 @@ fn run_compound_command(
             }
             wrap_result("for", last_result)
         }
-        CompoundCommand::While {
-            ref mut cond,
-            ref mut body,
-        } => {
+        CompoundCommand::While { ref cond, ref body } => {
             let mut last_result = 0;
             let mut cond_result = run_statements(state, cond)?;
             while cond_result == 0 {
@@ -372,10 +370,7 @@ fn run_compound_command(
             }
             wrap_result("while", last_result)
         }
-        CompoundCommand::Until {
-            ref mut cond,
-            ref mut body,
-        } => {
+        CompoundCommand::Until { ref cond, ref body } => {
             let mut last_result = 0;
             let mut cond_result = run_statements(state, cond)?;
             while cond_result != 0 {
@@ -385,8 +380,8 @@ fn run_compound_command(
             wrap_result("until", last_result)
         }
         CompoundCommand::Case {
-            ref mut match_var,
-            ref mut cases,
+            ref match_var,
+            ref cases,
         } => {
             // Will always be a single value because there is no field splitting
             let expansion_flags = ExpansionFlag::all() - ExpansionFlag::FIELD_SPLITTING;
@@ -395,7 +390,7 @@ fn run_compound_command(
             let mut last_result = 0;
             for case in cases {
                 if is_case_pattern_match(&match_vars[0], &case.patterns, &mut state.env)? {
-                    last_result = run_statements(state, &mut case.body)?;
+                    last_result = run_statements(state, &case.body)?;
                     break;
                 }
             }

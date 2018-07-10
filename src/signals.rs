@@ -12,29 +12,32 @@ const SIGNALS: [signal::Signal; 3] = [signal::SIGINT, signal::SIGQUIT, signal::S
 static IGNORE_SIGNALS: [signal::Signal; 2] = [signal::SIGTTIN, signal::SIGTTOU];
 
 /// Initialize all signal handlers
-pub fn initialize_signals() {
-    let mut sig_action = signal::SigAction::new(
-        signal::SigHandler::Handler(handle_signal),
-        signal::SaFlags::empty(),
-        signal::SigSet::all(),
-    );
-    for signal in SIGNALS.iter() {
-        unsafe {
-            if let Err(res) = signal::sigaction(*signal, &sig_action) {
-                println!("Error initializing signal handling: {:?}", res);
+pub fn initialize_signals(interactive: bool) {
+    let mut sig_action;
+    if interactive {
+        sig_action = signal::SigAction::new(
+            signal::SigHandler::Handler(handle_signal),
+            signal::SaFlags::empty(),
+            signal::SigSet::all(),
+        );
+        for signal in SIGNALS.iter() {
+            unsafe {
+                if let Err(res) = signal::sigaction(*signal, &sig_action) {
+                    println!("Error initializing signal handling: {:?}", res);
+                }
             }
         }
-    }
 
-    sig_action = signal::SigAction::new(
-        signal::SigHandler::SigIgn,
-        signal::SaFlags::empty(),
-        signal::SigSet::all(),
-    );
-    for signal in IGNORE_SIGNALS.iter() {
-        unsafe {
-            if let Err(res) = signal::sigaction(*signal, &sig_action) {
-                println!("Error initializing signal handling: {:?}", res);
+        sig_action = signal::SigAction::new(
+            signal::SigHandler::SigIgn,
+            signal::SaFlags::empty(),
+            signal::SigSet::all(),
+        );
+        for signal in IGNORE_SIGNALS.iter() {
+            unsafe {
+                if let Err(res) = signal::sigaction(*signal, &sig_action) {
+                    println!("Error initializing signal handling: {:?}", res);
+                }
             }
         }
     }
@@ -67,18 +70,44 @@ pub fn cleanup_signals() {
     }
 }
 
+pub struct SignalMutex(signal::Signal);
+
+pub struct SignalGuard(signal::SigSet);
+
+impl SignalGuard {
+    pub fn new(signal: signal::Signal) -> Self {
+        let mut sigset = signal::SigSet::empty();
+        sigset.add(signal);
+        let _ = sigset.thread_block();
+        SignalGuard(sigset)
+    }
+}
+
+impl Drop for SignalGuard {
+    fn drop(&mut self) {
+        let _ = self.0.thread_unblock();
+    }
+}
+
+impl SignalMutex {
+    pub fn new(signal: signal::Signal) -> Self {
+        SignalMutex(signal)
+    }
+
+    pub fn lock(&self) -> SignalGuard {
+        SignalGuard::new(self.0)
+    }
+}
+
 pub extern "C" fn handle_signal(sig: i32) {
     LAST_SIGNAL.store(sig as isize, Ordering::Relaxed);
 }
 
 pub extern "C" fn handle_sigchld(_sig: i32) {
-    let mut sigchldset = signal::SigSet::empty();
-    sigchldset.add(signal::SIGCHLD);
-    let _ = sigchldset.thread_block();
+    let sig_mutex = SignalMutex::new(signal::SIGCHLD);
+    let _ = sig_mutex.lock();
 
     job::update_jobs();
-
-    let _ = sigchldset.thread_unblock();
 }
 
 /// Get the value of the most recent signal.  This function resets the last

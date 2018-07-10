@@ -100,7 +100,7 @@ impl fmt::Display for Process {
 
 pub fn exec_cmd(
     state: &mut ShellState,
-    cmd: &mut SimpleCommand,
+    cmd: &SimpleCommand,
     pgid: Pid,
     async: bool,
 ) -> Result<CommandResult, String> {
@@ -121,6 +121,7 @@ pub fn exec_cmd(
         ref mut env,
     } = state;
     if proc.prog.is_none() {
+        proc.pid = unistd::getpid();
         update_env(&proc, env);
         return Ok(CommandResult(proc, Some(0)));
     }

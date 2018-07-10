@@ -10,6 +10,7 @@ use nix::unistd::Pid;
 use nix::{self, unistd};
 
 use process::Process;
+use signals::SignalMutex;
 use util::{self, SharedTable};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -79,13 +80,43 @@ impl Job {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct JobTable {
-    jobs: VecDeque<Job>,
+    pub jobs: VecDeque<Job>,
+}
+
+pub struct GuardedJobTable {
+    sig_mutex: SignalMutex,
+    table: SharedTable<JobTable>,
+}
+
+impl GuardedJobTable {
+    pub fn new() -> Self {
+        GuardedJobTable {
+            sig_mutex: SignalMutex::new(signal::SIGCHLD),
+            table: SharedTable::new(JobTable::new()),
+        }
+    }
+
+    pub fn run_mut<T, F: FnOnce(&mut JobTable) -> T>(&self, op: F) -> T {
+        self.sig_mutex.lock();
+        {
+            let mut job_table = self.table.get_inner();
+            op(&mut job_table)
+        }
+    }
+
+    pub fn run<T, F: FnOnce(&JobTable) -> T>(&self, op: F) -> T {
+        self.sig_mutex.lock();
+        {
+            let job_table = self.table.get_inner();
+            op(&job_table)
+        }
+    }
 }
 
 lazy_static! {
-    static ref JOB_TABLE: SharedTable<JobTable> = SharedTable::new(JobTable::new());
+    pub static ref JOB_TABLE: GuardedJobTable = GuardedJobTable::new();
 }
 
 pub fn initialize_job_table() {
@@ -191,70 +222,74 @@ impl JobTable {
 }
 
 pub fn print_jobs() {
-    let job_table = JOB_TABLE.get_inner();
-    let mut managed_jobs: Vec<&Job> = job_table.jobs.iter().filter(|j| j.id != 0).collect();
-    managed_jobs.sort_by(|a, b| a.id.cmp(&b.id));
-    for job in managed_jobs {
-        let status = match job.status {
-            JobStatus::Done(_) => "done",
-            JobStatus::Stopped => "suspended",
-            // These two shouldn't appear with the jobs command, but they may be useful for debugging
-            JobStatus::Running => "running",
-            JobStatus::New => "new",
-        };
-        println!("[{}] {}\t{}", job.id, status, job.cmd);
-    }
+    JOB_TABLE.run(|job_table| {
+        let mut managed_jobs: Vec<&Job> = job_table.jobs.iter().filter(|j| j.id != 0).collect();
+        managed_jobs.sort_by(|a, b| a.id.cmp(&b.id));
+        for job in managed_jobs {
+            let status = match job.status {
+                JobStatus::Done(_) => "done",
+                JobStatus::Stopped => "suspended",
+                // These two shouldn't appear with the jobs command, but they may be useful for debugging
+                JobStatus::Running => "running",
+                JobStatus::New => "new",
+            };
+            println!("[{}] {}\t{}", job.id, status, job.cmd);
+        }
+    })
 }
 
 pub fn start_job(foreground: bool) -> Result<i32, Error> {
-    let job_table = JOB_TABLE.get_inner();
-    if let Some(ref job) = job_table.last_job() {
-        println!(
-            "[{}]  {} continued\t{}",
-            job.id,
-            if foreground { "-" } else { "+" },
-            job.cmd
-        );
-        let res = if foreground {
-            foreground_job(job)
+    JOB_TABLE.run(|job_table| {
+        if let Some(ref job) = job_table.last_job() {
+            println!(
+                "[{}]  {} continued\t{}",
+                job.id,
+                if foreground { "-" } else { "+" },
+                job.cmd
+            );
+            let res = if foreground {
+                foreground_job(job)
+            } else {
+                background_job(job)
+            };
+            if let Err(e) = res {
+                print_err!("{}", e);
+                Ok(2)
+            } else {
+                Ok(0)
+            }
         } else {
-            background_job(job)
-        };
-        if let Err(e) = res {
-            print_err!("{}", e);
-            Ok(2)
-        } else {
-            Ok(0)
+            writeln!(
+                stderr(),
+                "{}: no current job",
+                if foreground { "fg" } else { "bg" }
+            ).unwrap();
+            Ok(1)
         }
-    } else {
-        writeln!(
-            stderr(),
-            "{}: no current job",
-            if foreground { "fg" } else { "bg" }
-        ).unwrap();
-        Ok(1)
-    }
+    })
 }
 
 pub fn add_job(p: &Process) -> Result<Job, String> {
     let cmd = format!("{}", p);
-    let new_job = Job::new(p.pid, p.pgid, &cmd, p.async);
-    JOB_TABLE.get_inner().add_job(new_job.clone());
-
-    Ok(new_job)
+    JOB_TABLE.run_mut(|job_table| {
+        let new_job = Job::new(p.pid, p.pgid, &cmd, p.async);
+        job_table.add_job(new_job.clone());
+        Ok(new_job)
+    })
 }
 
 fn update_job<F>(job_id: i32, f: F) -> bool
 where
     F: FnOnce(&mut Job) -> (),
 {
-    let mut inner = JOB_TABLE.get_inner();
-    let maybe_job = inner.jobs.iter_mut().find(|j| j.id == job_id);
-    let ret = maybe_job.is_some();
-    if let Some(job) = maybe_job {
-        f(job);
-    }
-    ret
+    JOB_TABLE.run_mut(|inner| {
+        let maybe_job = inner.jobs.iter_mut().find(|j| j.id == job_id);
+        let ret = maybe_job.is_some();
+        if let Some(job) = maybe_job {
+            f(job);
+        }
+        ret
+    })
 }
 
 pub fn foreground_job(job: &Job) -> Result<i32, String> {
@@ -353,8 +388,9 @@ fn get_job_status(pid: Pid) -> nix::Result<WaitStatus> {
 }
 
 pub fn update_job_list() {
-    let mut job_table = JOB_TABLE.get_inner();
-    job_table.update_job_list();
+    JOB_TABLE.run_mut(|job_table| {
+        job_table.update_job_list();
+    });
 }
 
 pub fn update_job_status(job_id: i32) {
@@ -364,6 +400,7 @@ pub fn update_job_status(job_id: i32) {
 }
 
 pub fn update_jobs() {
-    let mut job_table = JOB_TABLE.get_inner();
-    job_table.update_jobs();
+    JOB_TABLE.run_mut(|job_table| {
+        job_table.update_jobs();
+    })
 }

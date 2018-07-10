@@ -98,7 +98,7 @@ fn initialize_term(mut interactive: bool) -> ShellState {
 
     job::initialize_job_table();
 
-    initialize_signals();
+    initialize_signals(interactive);
 
     let state = ShellState::new();
 
