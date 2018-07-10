@@ -14,9 +14,9 @@ use tempfile::tempfile;
 
 use builtin::Builtin;
 use env::UserEnv;
+use expand;
 use file::Fd;
 use input::ast::*;
-use interpolate;
 use options::{self, OptionTable};
 use signals;
 use state::ShellState;
@@ -125,8 +125,8 @@ pub fn exec_cmd(
         return Ok(CommandResult(proc, Some(0)));
     }
 
-    // Interpolate parameters at the last possible moment
-    interpolate::expand(&mut proc, env)?;
+    // Expand parameters at the last possible moment
+    expand::expand_process(&mut proc, env)?;
 
     let builtin_entry = proc
         .prog

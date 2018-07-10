@@ -16,6 +16,18 @@ use process::Process;
 use signals;
 use state::ShellState;
 
+bitflags! {
+    pub struct ExpansionFlag: u32 {
+        const TILDE = 0b0000001;
+        const PARAMETER = 0b0000010;
+        const COMMAND = 0b0000100;
+        const ARITHMETIC = 0b0001000;
+        const FIELD_SPLITTING = 0b0010000;
+        const PATHNAME = 0b0100000;
+        const QUOTE_REMOVAL = 0b1000000;
+    }
+}
+
 fn run_command(input: &str) -> String {
     let (pipe_out, pipe_in) = unistd::pipe().unwrap();
     let mut pout = Fd::new(pipe_out);
@@ -42,7 +54,7 @@ fn run_command(input: &str) -> String {
                 }
             }
         }
-        output
+        output.trim_right_matches('\n').to_owned()
     } else {
         signals::cleanup_signals();
 
@@ -66,10 +78,35 @@ fn split_fields(word: &String, user_env: &UserEnv) -> Vec<String> {
         return vec![word.to_owned()];
     }
 
-    word.split(|c| ifs.contains(c))
-        .filter(|s| s.len() > 0)
-        .map(str::to_owned)
-        .collect()
+    let mut current_word = String::new();
+    let mut words = Vec::new();
+    let mut quoted = None;
+    let mut escaped = false;
+    for c in word.chars() {
+        if escaped {
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if quoted.is_some() {
+            let quote_char = quoted.unwrap();
+            if c == quote_char {
+                quoted = None;
+            }
+        } else if c == '"' || c == '\'' {
+            quoted = Some(c);
+        } else if ifs.contains(c) {
+            if current_word.len() > 0 {
+                words.push(current_word);
+                current_word = String::new();
+            }
+            continue;
+        }
+        current_word.push(c);
+    }
+    if current_word.len() > 0 {
+        words.push(current_word);
+    }
+    words
 }
 
 fn expand_arith(
@@ -79,7 +116,12 @@ fn expand_arith(
 ) -> Result<String, String> {
     let mut expanded = String::new();
     for word in to_eval.split(" ") {
-        let expanded_words = expand_word(&word.to_string(), user_env, is_assignment)?;
+        let expanded_words = expand(
+            &word.to_string(),
+            user_env,
+            ExpansionFlag::PARAMETER | ExpansionFlag::COMMAND | ExpansionFlag::QUOTE_REMOVAL,
+            is_assignment,
+        )?;
         for expanded_word in expanded_words {
             expanded.push_str(&expanded_word);
             expanded.push(' ');
@@ -92,17 +134,15 @@ fn expand_arith(
     Ok(format!("{}", expr_result))
 }
 
-fn parameter_expansion(
+fn dollar_expansion(
     t: &String,
     user_env: &mut UserEnv,
     is_assignment: bool,
-) -> Result<Vec<String>, String> {
+) -> Result<String, String> {
     let mut s = String::new();
-    let mut words = Vec::new();
 
     let mut chars = t.chars().peekable();
     let mut is_lit = false;
-    let mut is_quoted = false;
     let mut escape = false;
 
     loop {
@@ -116,15 +156,15 @@ fn parameter_expansion(
                 // fall-through to variable evaluation
             }
             Some(c) => {
-                // TODO better quote handling
-                if !escape {
+                if is_lit {
                     if c == '\'' {
-                        is_lit = !is_lit;
-                    } else if c == '\"' {
-                        is_quoted = !is_quoted;
+                        is_lit = false
                     }
+                } else if !escape && c == '\'' {
+                    is_lit = true;
+                } else {
+                    escape = c == '\\';
                 }
-                escape = c == '\\';
                 s.push(c);
                 continue;
             }
@@ -185,22 +225,9 @@ fn parameter_expansion(
             };
         }
 
-        if is_quoted || is_assignment {
-            s.push_str(&result);
-        } else {
-            let fields = split_fields(&result, user_env);
-            if fields.len() == 1 {
-                s.push_str(&fields[0]);
-            } else if fields.len() > 1 {
-                s.push_str(&fields[0]);
-                words.push(s.clone());
-                words.extend(fields[1..fields.len() - 1].iter().cloned());
-                s = fields.last().unwrap().to_owned();
-            }
-        }
+        s.push_str(&result);
     }
-    words.push(s.clone());
-    Ok(words)
+    Ok(s)
 }
 
 fn get_user_home(name: &str) -> Option<String> {
@@ -284,35 +311,53 @@ fn quote_removal(word: &String) -> String {
         .collect()
 }
 
-pub fn expand_word(
+pub fn expand(
     word: &String,
     user_env: &mut UserEnv,
+    expansion_types: ExpansionFlag,
     is_assignment: bool,
 ) -> Result<Vec<String>, String> {
-    let s = tilde_expansion(&word, is_assignment)?;
-    let mut words = parameter_expansion(&s, user_env, is_assignment)?;
-    words = words.into_iter().map(|s| quote_removal(&s)).collect();
+    let mut s = word.clone();
+    if expansion_types.contains(ExpansionFlag::TILDE) {
+        s = tilde_expansion(&word, is_assignment)?;
+    }
+    if expansion_types.contains(ExpansionFlag::PARAMETER)
+        || expansion_types.contains(ExpansionFlag::COMMAND)
+        || expansion_types.contains(ExpansionFlag::ARITHMETIC)
+    {
+        s = dollar_expansion(&s, user_env, is_assignment)?;
+    }
+    let mut words = if expansion_types.contains(ExpansionFlag::FIELD_SPLITTING) && !is_assignment {
+        split_fields(&s, user_env)
+    } else {
+        vec![s]
+    };
+    if expansion_types.contains(ExpansionFlag::QUOTE_REMOVAL) {
+        words = words.into_iter().map(|s| quote_removal(&s)).collect();
+    }
     Ok(words)
 }
 
-pub fn expand(p: &mut Process, user_env: &mut UserEnv) -> Result<(), String> {
+pub fn expand_process(p: &mut Process, user_env: &mut UserEnv) -> Result<(), String> {
+    let mut expansion_flags = ExpansionFlag::all();
     let mut new_args = Vec::new();
     if p.prog.is_some() {
-        let expanded = expand_word(p.prog.as_ref().unwrap(), user_env, false)?;
+        let expanded = expand(p.prog.as_ref().unwrap(), user_env, expansion_flags, false)?;
         p.prog = expanded.first().map(|s| s.clone());
         new_args = expanded[1..].iter().cloned().collect();
     }
     let expanded_args = p
         .args
         .iter()
-        .map(|arg| expand_word(arg, user_env, false))
+        .map(|arg| expand(arg, user_env, expansion_flags, false))
         .collect::<Result<Vec<_>, _>>()?;
     new_args.extend(expanded_args.into_iter().flat_map(|v| v));
     p.args = new_args;
+    expansion_flags -= ExpansionFlag::FIELD_SPLITTING;
     for ref mut prefix in p.env.iter_mut() {
         if let &mut CmdPrefix::Assignment { ref mut rhs, .. } = *prefix {
             // No field splitting on assignment fields, so this is just one word
-            *rhs = expand_word(rhs, user_env, true).map(|ws| ws[0].clone())?;
+            *rhs = expand(rhs, user_env, expansion_flags, true)?.remove(0);
         }
     }
     Ok(())
@@ -337,7 +382,7 @@ mod tests {
 
     fn expand_basic(s: &String) -> String {
         let mut user_env = make_test_env();
-        let mut words = expand_word(s, &mut user_env, false).unwrap();
+        let mut words = expand(s, &mut user_env, ExpansionFlag::all(), false).unwrap();
         words.remove(0)
     }
 
@@ -407,7 +452,7 @@ mod tests {
     fn expand_tilde_err_no_user() {
         let mut user_env = make_test_env();
         let toks = "~unknown/.config".to_string();
-        let word = expand_word(&toks, &mut user_env, false);
+        let word = expand(&toks, &mut user_env, ExpansionFlag::all(), false);
         assert!(word.is_err());
     }
 
@@ -415,7 +460,7 @@ mod tests {
     fn expand_tilde_after_semi_assignment() {
         let mut user_env = make_test_env();
         let toks = "a:~".to_string();
-        let words = expand_word(&toks, &mut user_env, true).unwrap();
+        let words = expand(&toks, &mut user_env, ExpansionFlag::all(), true).unwrap();
 
         let home = env::var("HOME").unwrap();
         assert_eq!(words[0], "a:".to_string() + &home);
@@ -425,7 +470,7 @@ mod tests {
     fn expand_tilde_after_semi_with_name() {
         let mut user_env = make_test_env();
         let toks = "a:~root:b".to_string();
-        let words = expand_word(&toks, &mut user_env, true).unwrap();
+        let words = expand(&toks, &mut user_env, ExpansionFlag::all(), true).unwrap();
 
         assert_eq!(words[0], "a:/root:b".to_string());
     }
@@ -449,7 +494,7 @@ mod tests {
     fn expand_parameter_no_parameter() {
         let mut user_env = make_test_env();
         let toks = "${!}".to_string();
-        let word = expand_word(&toks, &mut user_env, false);
+        let word = expand(&toks, &mut user_env, ExpansionFlag::all(), false);
 
         assert!(word.is_err());
     }
@@ -459,7 +504,7 @@ mod tests {
         let mut user_env = make_test_env();
         user_env.set("0", "A");
         let toks = "$01".to_string();
-        let word = expand_word(&toks, &mut user_env, false).unwrap();
+        let word = expand(&toks, &mut user_env, ExpansionFlag::all(), false).unwrap();
 
         assert_eq!(word[0], "A1".to_string());
     }
@@ -468,7 +513,7 @@ mod tests {
     fn expand_arith() {
         let mut user_env = make_test_env();
         let toks = "$((1 + 1))".to_string();
-        let word = expand_word(&toks, &mut user_env, false).unwrap();
+        let word = expand(&toks, &mut user_env, ExpansionFlag::all(), false).unwrap();
 
         assert_eq!(&word[0], "2");
     }
@@ -478,7 +523,7 @@ mod tests {
         let mut user_env = make_test_env();
         user_env.set("a", "1");
         let toks = "$((1 + $a))".to_string();
-        let word = expand_word(&toks, &mut user_env, false).unwrap();
+        let word = expand(&toks, &mut user_env, ExpansionFlag::all(), false).unwrap();
 
         assert_eq!(&word[0], "2");
     }
@@ -496,7 +541,7 @@ mod tests {
         let mut user_env = make_test_env();
         user_env.set("X", "A           B");
         let toks = "$X".to_string();
-        let words = expand_word(&toks, &mut user_env, false).unwrap();
+        let words = expand(&toks, &mut user_env, ExpansionFlag::all(), false).unwrap();
 
         assert_eq!(words, vec!["A".to_string(), "B".to_string()]);
     }
@@ -507,7 +552,7 @@ mod tests {
         let val = "A  B".to_string();
         user_env.set("A", &val);
         let toks = r#""$A""#.to_string();
-        let words = expand_word(&toks, &mut user_env, false).unwrap();
+        let words = expand(&toks, &mut user_env, ExpansionFlag::all(), false).unwrap();
 
         assert_eq!(words, vec![val]);
     }
@@ -517,7 +562,7 @@ mod tests {
         let mut user_env = make_test_env();
         user_env.set("X", "A           B");
         let mut p = Process::new(Some("$X".to_string()), Vec::new(), Vec::new(), Vec::new());
-        let res = expand(&mut p, &mut user_env);
+        let res = expand_process(&mut p, &mut user_env);
 
         assert!(res.is_ok());
         assert_eq!(p.prog, Some("A".to_string()));

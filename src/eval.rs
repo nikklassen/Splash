@@ -5,11 +5,11 @@ use libc::{STDIN_FILENO, STDOUT_FILENO};
 use nix::unistd::{self, Pid};
 
 use env::UserEnv;
+use expand::{self, ExpansionFlag};
 use input::ast::*;
 use input::parser::{self, ProgramParseResult};
 use input::token::*;
 use input::{prompt, tokenizer};
-use interpolate;
 use job;
 use options;
 use pattern;
@@ -352,7 +352,7 @@ fn run_compound_command(
         } => {
             let mut last_result = 0;
             for elem in list {
-                let items = interpolate::expand_word(&elem, &mut state.env, false)?;
+                let items = expand::expand(&elem, &mut state.env, ExpansionFlag::all(), false)?;
                 for item in items {
                     state.env.set(var, item);
                     last_result = run_statements(state, body)?;
@@ -389,7 +389,9 @@ fn run_compound_command(
             ref mut cases,
         } => {
             // Will always be a single value because there is no field splitting
-            let mut match_vars = interpolate::expand_word(&match_var, &mut state.env, false)?;
+            let expansion_flags = ExpansionFlag::all() - ExpansionFlag::FIELD_SPLITTING;
+            let mut match_vars =
+                expand::expand(&match_var, &mut state.env, expansion_flags, false)?;
             let mut last_result = 0;
             for case in cases {
                 if is_case_pattern_match(&match_vars[0], &case.patterns, &mut state.env)? {
@@ -408,7 +410,12 @@ fn is_case_pattern_match(
     user_env: &mut UserEnv,
 ) -> Result<bool, String> {
     for pattern in patterns {
-        let expanded_pattern = interpolate::expand_word(&pattern, user_env, false)?;
+        let expanded_pattern = expand::expand(
+            &pattern,
+            user_env,
+            ExpansionFlag::all() - ExpansionFlag::FIELD_SPLITTING,
+            false,
+        )?;
         if pattern::is_match(match_var, &expanded_pattern[0])? {
             return Ok(true);
         }

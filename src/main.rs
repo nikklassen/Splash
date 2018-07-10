@@ -5,6 +5,8 @@ extern crate getopts;
 extern crate libc;
 extern crate nix;
 extern crate tempfile;
+#[macro_use]
+extern crate bitflags;
 
 #[macro_use]
 extern crate lazy_static;
@@ -19,10 +21,10 @@ mod test_fixture;
 pub mod builtin;
 pub mod env;
 mod eval;
+mod expand;
 pub mod expression;
 pub mod file;
 pub mod input;
-mod interpolate;
 pub mod job;
 pub mod options;
 pub mod pattern;
